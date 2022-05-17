@@ -37,6 +37,10 @@ import (
 	"net"
 	"os"
 	"strings"
+	// Consistent hashing with bounded load library
+	"github.com/buraksezer/consistent"
+	// An example hashing function used in consistent package.
+	"github.com/cespare/xxhash"
 )
 
 // DNSHeader describes the request/response DNS header
@@ -47,6 +51,27 @@ type DNSHeader struct {
 	NumAnswers     uint16
 	NumAuthorities uint16
 	NumAdditionals uint16
+}
+
+// Create a struct just in case we need to add more info in the future.
+type ServerNode struct {
+	portNum string
+	serverConn *net.UDPConn
+}
+
+func (n ServerNode) String() string {
+	return n.portNum
+}
+
+type DNSRequest []byte
+
+// The hashing fuction used to distribute keys/members uniformly. 
+type DNSRequestHasher struct{}
+
+func (h DNSRequestHasher) Sum64(data []byte) uint64 {
+	// Used the default one provided by the consistent package.
+	// TODO: Test if this hash function can provide uniformity.
+	return xxhash.Sum64(data)
 }
 
 // DNSResourceRecord describes individual records in the request and response of the DNS payload body
@@ -262,35 +287,93 @@ func handleDNSClient(requestBytes []byte, serverConn *net.UDPConn, clientAddr *n
 	serverConn.WriteToUDP(responseBuffer.Bytes(), clientAddr)
 }
 
-func main() {
-	serverAddr, err := net.ResolveUDPAddr("udp", ":1053")
+// Create a new consistent instance
+func CreateConsistentHashing() *consistent.Consistent {
+	cfg := consistent.Config {
+		PartitionCount:    3,
+		ReplicationFactor: 3,
+		Load:              1.50,
+		Hasher:            DNSRequestHasher{},
+	}
+	return consistent.New(nil, cfg)
+}
 
+func GetServerAddr(portNum string) *net.UDPAddr {
+	serverAddr, err := net.ResolveUDPAddr("udp", portNum)
 	if err != nil {
-		fmt.Println("Error resolving UDP address: ", err.Error())
+		fmt.Println("Error resolving server UDP address: ", err.Error())
 		os.Exit(1)
 	}
+	return serverAddr
+}
 
+func StartServerConnection(portNum string) *net.UDPConn {
+	serverAddr, err := net.ResolveUDPAddr("udp", portNum)
+	if err != nil {
+		fmt.Println("Error resolving server UDP address: ", err.Error())
+		os.Exit(1)
+	}
 	serverConn, err := net.ListenUDP("udp", serverAddr)
-
 	if err != nil {
-		fmt.Println("Error listening: ", err.Error())
+		fmt.Println("Error listening server connection: ", err.Error())
+		os.Exit(1)
+	}
+	return serverConn
+}
+
+// Pseudo distributed servers. 
+// TODO: Change to use AWS EC2 instances and add cache function to them. 
+func SetupServers() map[string]ServerNode {
+	m := make(map[string]ServerNode)
+	serverNode1 := ServerNode{
+		portNum: "1054",
+		serverConn: StartServerConnection(":1059"),
+	}
+	m[serverNode1.portNum] = serverNode1
+	serverNode2 := ServerNode{
+		portNum: "1055",
+		serverConn: StartServerConnection(":1060"),
+	}
+	m[serverNode2.portNum] = serverNode2
+	return m
+}
+
+func main() {
+	portToServerMap := SetupServers()
+	c := CreateConsistentHashing()
+
+	for _, n := range portToServerMap {
+		c.Add(n)
+	}
+
+	hashServerAddr, err := net.ResolveUDPAddr("udp", ":1057")
+	if err != nil {
+		fmt.Println("Error resolving consistent hashing server UDP address: ", err.Error())
 		os.Exit(1)
 	}
 
-	fmt.Println("Listening at: ", serverAddr)
+	hashServerConn, err := net.ListenUDP("udp", hashServerAddr)
 
-	defer serverConn.Close()
+	if err != nil {
+		fmt.Println("Error listening consistent hashing server connection: ", err.Error())
+		os.Exit(1)
+	}
+
+	fmt.Println("Listening at: ", hashServerAddr)
+
+	defer hashServerConn.Close()
 
 	for {
 		requestBytes := make([]byte, UDPMaxMessageSizeBytes)
 
-		_, clientAddr, err := serverConn.ReadFromUDP(requestBytes)
+		_, clientAddr, err := hashServerConn.ReadFromUDP(requestBytes)
 
 		if err != nil {
 			fmt.Println("Error receiving: ", err.Error())
 		} else {
 			fmt.Println("Received request from ", clientAddr)
-			go handleDNSClient(requestBytes, serverConn, clientAddr) // array is value type (call-by-value), i.e. copied
+			assignedServerNode := portToServerMap[c.LocateKey(requestBytes).String()]
+			go handleDNSClient(requestBytes, assignedServerNode.serverConn, clientAddr) // array is value type (call-by-value), i.e. copied
 		}
 	}
 }
