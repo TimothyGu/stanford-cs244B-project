@@ -1,6 +1,8 @@
 Simple DNS Server implemented in Go
 ===================================
 
+Forked from https://github.com/dlorch/dnsserver
+
 The Domain Name System (DNS) consists of multiple elements: Authoritative
 DNS Servers store and provide DNS record information, Recursive DNS servers
 (also referred to as caching DNS servers) are the "middlemen" that recursively
