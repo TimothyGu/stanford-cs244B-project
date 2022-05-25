@@ -59,84 +59,92 @@ func SetupServers() map[string]ServerNode {
 	m := make(map[string]ServerNode)
 	serverNode1 := ServerNode{
 		hashString: "node1",
-		ipAddr:     "54.177.220.133",
-		portNum:    "1059",
+		ipAddr:     "13.56.11.133",
+		portNum:    "1053",
 	}
 	m[serverNode1.hashString] = serverNode1
-	//serverNode2 := ServerNode{
-	//	hashString: "node2",
-	//	serverConn: StartServerConnection(":1060"),
-	//	portNum:    "1060",
-	//}
-	//m[serverNode2.hashString] = serverNode2
+	serverNode2 := ServerNode{
+		hashString: "node2",
+		ipAddr:     "13.56.11.133",
+		portNum:    "1053",
+	}
+	m[serverNode2.hashString] = serverNode2
 	return m
 }
 
-func findAssignedServer(name []byte) string {
-	var assignedServerNode ServerNode
-	if *useConsistentHashing {
-		assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey(name).String()]
+func ListenAndServeUDP(localServerData *LocalServerData) {
+	
+	s := &dns.Server{
+		Addr:    ":8083",
+		Net:     "udp",
 	}
-	return assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-}
 
-func hashServerHandle(rw dns.ResponseWriter, queryMsg *dns.Msg) {
-	log.Infof("received request from %v", rw.RemoteAddr())
+	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
+		log.Infof("received request from %v", rw.RemoteAddr())
+		/**
+		 * lookup values
+		 */
+		output := make(chan TypedResourceRecord)
 
-	/**
-	 * lookup values
-	 */
-	output := make(chan TypedResourceRecord)
+		// Look up queries in parallel.
+		go func(output chan<- TypedResourceRecord) {
+			var wg sync.WaitGroup
+			for _, query := range queryMsg.Question {
+				wg.Add(1)
+				var assignedServerNode ServerNode
+				if *useConsistentHashing {
+					assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
+				}
+				externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
+				go Lookup(&wg, query, output, externalServer)
+			}
+			wg.Wait()
+			close(output)
+		}(output)
 
-	// Look up queries in parallel.
-	go func(output chan<- TypedResourceRecord) {
-		var wg sync.WaitGroup
-		for _, query := range queryMsg.Question {
-			wg.Add(1)
-			externalServer := findAssignedServer([]byte(query.Name))
-			go Lookup(&wg, query, output, externalServer)
+		// Collect output from each query.
+		var answerResourceRecords []dns.RR
+		var authorityResourceRecords []dns.RR
+		var additionalResourceRecords []dns.RR
+		for rec := range output {
+			switch rec.Type {
+			case ResourceAnswer:
+				answerResourceRecords = append(answerResourceRecords, rec.Record)
+			case ResourceAuthority:
+				authorityResourceRecords = append(authorityResourceRecords, rec.Record)
+			case ResourceAdditional:
+				additionalResourceRecords = append(additionalResourceRecords, rec.Record)
+			}
 		}
-		wg.Wait()
-		close(output)
-	}(output)
 
-	// Collect output from each query.
-	var answerResourceRecords []dns.RR
-	var authorityResourceRecords []dns.RR
-	var additionalResourceRecords []dns.RR
-	for rec := range output {
-		switch rec.Type {
-		case ResourceAnswer:
-			answerResourceRecords = append(answerResourceRecords, rec.Record)
-		case ResourceAuthority:
-			authorityResourceRecords = append(authorityResourceRecords, rec.Record)
-		case ResourceAdditional:
-			additionalResourceRecords = append(additionalResourceRecords, rec.Record)
+		/**
+		 * write response
+		 */
+		response := new(dns.Msg)
+		response.SetReply(queryMsg)
+		response.RecursionAvailable = true
+
+		for _, answerResourceRecord := range answerResourceRecords {
+			response.Answer = append(response.Answer, answerResourceRecord)
 		}
-	}
 
-	/**
-	 * write response
-	 */
-	response := new(dns.Msg)
-	response.SetReply(queryMsg)
-	response.RecursionAvailable = true
+		for _, authorityResourceRecord := range authorityResourceRecords {
+			response.Ns = append(response.Ns, authorityResourceRecord)
+		}
 
-	for _, answerResourceRecord := range answerResourceRecords {
-		response.Answer = append(response.Answer, answerResourceRecord)
-	}
+		for _, additionalResourceRecord := range additionalResourceRecords {
+			response.Extra = append(response.Extra, additionalResourceRecord)
+		}
 
-	for _, authorityResourceRecord := range authorityResourceRecords {
-		response.Ns = append(response.Ns, authorityResourceRecord)
-	}
+		err := rw.WriteMsg(response)
+		if err != nil {
+			log.Errorf("error writing response %v", err)
+		}
+	})
 
-	for _, additionalResourceRecord := range additionalResourceRecords {
-		response.Extra = append(response.Extra, additionalResourceRecord)
-	}
-
-	err := rw.WriteMsg(response)
+	err := s.ListenAndServe()
 	if err != nil {
-		log.Errorf("error writing response %v", err)
+		log.Fatalf("Error resolving UDP address: %v", err)
 	}
 }
 
@@ -154,14 +162,5 @@ func main() {
 		}
 	}
 
-	s := &dns.Server{
-		Addr:    ":8080",
-		Net:     "udp",
-		Handler: dns.HandlerFunc(hashServerHandle),
-	}
-
-	err := s.ListenAndServe()
-	if err != nil {
-		log.Fatalf("Error resolving UDP address: %v", err)
-	}
+	ListenAndServeUDP(&localServerData)
 }
