@@ -1,0 +1,167 @@
+package main
+
+import (
+	"flag"
+	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
+	"net"
+	"sync"
+
+	// Consistent hashing with bounded load library
+	"github.com/buraksezer/consistent"
+	// An example hashing function used in consistent package.
+	"github.com/cespare/xxhash"
+)
+
+var useConsistentHashing = flag.Bool("ch", true, "use consistent hashing to distribute requests")
+var useLocalCache = flag.Bool("lc", true, "check local cache before sending requests to servers")
+
+// ServerNode contains the information for server code.
+type ServerNode struct {
+	hashString string
+	serverConn *net.UDPConn
+	ipAddr     string
+	portNum    string
+}
+
+func (n ServerNode) String() string {
+	return n.hashString
+}
+
+type LocalServerData struct {
+	serverNodes map[string]ServerNode
+	c           *consistent.Consistent
+}
+
+var localServerData LocalServerData
+
+// DNSRequestHash is the hash function used to distribute keys/members uniformly.
+type DNSRequestHash struct{}
+
+func (h DNSRequestHash) Sum64(data []byte) uint64 {
+	// Used the default one provided by the consistent package.
+	// TODO: Test if this hash function can provide uniformity.
+	return xxhash.Sum64(data)
+}
+
+// CreateConsistentHashing creates a new consistent instance.
+func CreateConsistentHashing() *consistent.Consistent {
+	cfg := consistent.Config{
+		PartitionCount:    3,
+		ReplicationFactor: 3,
+		Load:              1.50,
+		Hasher:            DNSRequestHash{},
+	}
+	return consistent.New(nil, cfg)
+}
+
+func SetupServers() map[string]ServerNode {
+	m := make(map[string]ServerNode)
+	serverNode1 := ServerNode{
+		hashString: "node1",
+		ipAddr:     "54.177.220.133",
+		portNum:    "1059",
+	}
+	m[serverNode1.hashString] = serverNode1
+	//serverNode2 := ServerNode{
+	//	hashString: "node2",
+	//	serverConn: StartServerConnection(":1060"),
+	//	portNum:    "1060",
+	//}
+	//m[serverNode2.hashString] = serverNode2
+	return m
+}
+
+func findAssignedServer(name []byte) string {
+	var assignedServerNode ServerNode
+	if *useConsistentHashing {
+		assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey(name).String()]
+	}
+	return assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
+}
+
+func hashServerHandle(rw dns.ResponseWriter, queryMsg *dns.Msg) {
+	log.Infof("received request from %v", rw.RemoteAddr())
+
+	/**
+	 * lookup values
+	 */
+	output := make(chan TypedResourceRecord)
+
+	// Look up queries in parallel.
+	go func(output chan<- TypedResourceRecord) {
+		var wg sync.WaitGroup
+		for _, query := range queryMsg.Question {
+			wg.Add(1)
+			externalServer := findAssignedServer([]byte(query.Name))
+			go Lookup(&wg, query, output, externalServer)
+		}
+		wg.Wait()
+		close(output)
+	}(output)
+
+	// Collect output from each query.
+	var answerResourceRecords []dns.RR
+	var authorityResourceRecords []dns.RR
+	var additionalResourceRecords []dns.RR
+	for rec := range output {
+		switch rec.Type {
+		case ResourceAnswer:
+			answerResourceRecords = append(answerResourceRecords, rec.Record)
+		case ResourceAuthority:
+			authorityResourceRecords = append(authorityResourceRecords, rec.Record)
+		case ResourceAdditional:
+			additionalResourceRecords = append(additionalResourceRecords, rec.Record)
+		}
+	}
+
+	/**
+	 * write response
+	 */
+	response := new(dns.Msg)
+	response.SetReply(queryMsg)
+	response.RecursionAvailable = true
+
+	for _, answerResourceRecord := range answerResourceRecords {
+		response.Answer = append(response.Answer, answerResourceRecord)
+	}
+
+	for _, authorityResourceRecord := range authorityResourceRecords {
+		response.Ns = append(response.Ns, authorityResourceRecord)
+	}
+
+	for _, additionalResourceRecord := range additionalResourceRecords {
+		response.Extra = append(response.Extra, additionalResourceRecord)
+	}
+
+	err := rw.WriteMsg(response)
+	if err != nil {
+		log.Errorf("error writing response %v", err)
+	}
+}
+
+func main() {
+	InitDB()
+
+	localServerData := LocalServerData{
+		serverNodes: SetupServers(),
+	}
+
+	if *useConsistentHashing {
+		localServerData.c = CreateConsistentHashing()
+		for _, n := range localServerData.serverNodes {
+			localServerData.c.Add(n)
+		}
+	}
+
+	s := &dns.Server{
+		Addr:    ":8080",
+		Net:     "udp",
+		Handler: dns.HandlerFunc(hashServerHandle),
+	}
+
+	err := s.ListenAndServe()
+	if err != nil {
+		log.Fatalf("Error resolving UDP address: %v", err)
+	}
+}
