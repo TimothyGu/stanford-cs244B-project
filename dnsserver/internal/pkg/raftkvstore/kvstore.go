@@ -138,13 +138,13 @@ func (s *KVStore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 	}
 }
 
-func (s *KVStore) storeToMap() map[any]any {
+func (s *KVStore) storeToMap() map[Key]Value {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	m := map[any]any{}
+	m := map[Key]Value{}
 	s.kvStore.Range(func(k any, v any) bool {
-		m[k] = v
+		m[k.(Key)] = v.(Value)
 		return true
 	})
 	return m
