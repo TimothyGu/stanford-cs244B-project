@@ -29,6 +29,12 @@ func (s *RaftCacheServer) Cache(ctx context.Context, req *pb.RaftCacheRequest) (
 	case pb.RaftCacheRequest_LOOKUP:
 		value, ok := s.store.Lookup(key)
 		return &pb.RaftCacheReply{Ok: ok, Value: value.(string)}, nil
+	case pb.RaftCacheRequest_STORE:
+		s.store.Propose(key, req.Value)
+		return &pb.RaftCacheReply{Ok: true}, nil
+	case pb.RaftCacheRequest_DELETE:
+		s.store.ProposeDelete(key)
+		return &pb.RaftCacheReply{Ok: true}, nil
 	}
 	return &pb.RaftCacheReply{Ok: false}, nil
 }
