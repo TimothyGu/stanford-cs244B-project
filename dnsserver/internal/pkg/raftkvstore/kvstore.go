@@ -139,8 +139,9 @@ func (s *KVStore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 }
 
 func (s *KVStore) storeToMap() map[Key]Value {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// jerry: discussion pending regarding whether to switch to a traditional map.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	m := map[Key]Value{}
 	s.kvStore.Range(func(k any, v any) bool {
