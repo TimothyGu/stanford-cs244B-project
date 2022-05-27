@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+option go_package = "github.com/TimothyGu/stanford-cs244B-project/raftcache";
+package raftcache;
+
+// The service should be running on the raft cluster's leader
+service RaftCache {
+    rpc Lookup(RaftCacheRequest) returns (RaftCacheReply) {}
+    rpc Store(RaftCacheRequest) returns (RaftCacheReply) {}
+    rpc Delete(RaftCacheRequest) returns (RaftCacheReply) {}
+}
+
+message RaftCacheRequest {
+    enum Action {
+        LOOKUP = 0;
+        STORE = 1;
+        DELETE = 2;
+    }
+
+    Action action = 1;
+    string key = 2;
+    string value = 3;
+    // Should be an array. Use a string for now.
+    // repeated string value = 3;
+}
+
+message RaftCacheReply {
+    bool ok = 1;
+    string value = 2;
+    // repeated string value = 2;
+}
+
+// func (h *httpKVAPI) Lookup(key string) (string, bool) {
+// 	v, ok := h.store.Lookup(key)
+// 	return v, ok
+// }
+
+// func (h *httpKVAPI) Store(key string, value string) {
+// 	h.store.Propose(key, value)
+// }
+
+// func (h *httpKVAPI) Delete(key string) {
+// 	h.store.ProposeDelete(key)
+// }
