@@ -1,21 +1,45 @@
 package raftkvstore
 
 import (
-	"go.etcd.io/etcd/raft/raftpb"
+	"context"
+	"log"
+
+	"go.etcd.io/etcd/raft/v3/raftpb"
 	pb "go.timothygu.me/stanford-cs244b-project/internal/pkg/raftcache"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type RaftCacheServer struct {
 	pb.UnimplementedRaftCacheServer
-	store       *kvstore
-	confChangeC chan<- raftpb.ConfChange
+	store       *KVStore
+	confChangeC chan<- *raftpb.ConfChange
 }
 
-func (s *RaftCacheServer) Lookup(req *pb.RaftCacheRequest) *pb.RaftCacheReply {
+var _ pb.RaftCacheServer = (*RaftCacheServer)(nil)
+
+func NewRaftCacheServer(store *KVStore, confChangeC chan<- *raftpb.ConfChange) *RaftCacheServer {
+	return &RaftCacheServer{store: store, confChangeC: confChangeC}
+}
+
+// "DNSRecord{\"name\":\"google.com\",\"type\":\"A\"}"
+
+func (s *RaftCacheServer) Cache(ctx context.Context, req *pb.RaftCacheRequest) (*pb.RaftCacheReply, error) {
 	action, key := req.Action, req.Key
 	switch action {
 	case pb.RaftCacheRequest_LOOKUP:
-		value, ok := s.store.kvStore.Load(key)
-		return &pb.RaftCacheReply{Ok: ok, Value: value.(string)}
+		value, ok := s.store.Lookup(key)
+		return &pb.RaftCacheReply{Ok: ok, Value: value.(string)}, nil
 	}
+	return &pb.RaftCacheReply{Ok: false}, nil
+}
+
+func (s *RaftCacheServer) ConfChange(ctx context.Context, req *pb.ConfChangeRequest) (*emptypb.Empty, error) {
+	var confChange raftpb.ConfChange
+	err := confChange.Unmarshal(req.Buf)
+	if err != nil {
+		log.Printf("confchange: unmarshal failed: %v", err)
+		return nil, err
+	}
+	s.confChangeC <- &confChange
+	return new(emptypb.Empty), nil
 }

@@ -20,15 +20,15 @@ import (
 )
 
 func Test_kvstore_snapshot(t *testing.T) {
-	tm := map[string]string{"foo": "bar"}
-	s := &kvstore{kvStore: tm}
+	tm := map[Key]Value{"foo": "bar"}
+	s := &KVStore{kvStore: tm}
 
 	v, _ := s.Lookup("foo")
 	if v != "bar" {
 		t.Fatalf("foo has unexpected value, got %s", v)
 	}
 
-	data, err := s.getSnapshot()
+	data, err := s.GetSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}

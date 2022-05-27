@@ -39,8 +39,8 @@ type cluster struct {
 	peers              []string
 	commitC            []<-chan *commit
 	errorC             []<-chan error
-	proposeC           []chan string
-	confChangeC        []chan raftpb.ConfChange
+	proposeC           []chan []byte
+	confChangeC        []chan *raftpb.ConfChange
 	snapshotTriggeredC []<-chan struct{}
 }
 
@@ -55,19 +55,19 @@ func newCluster(n int) *cluster {
 		peers:              peers,
 		commitC:            make([]<-chan *commit, len(peers)),
 		errorC:             make([]<-chan error, len(peers)),
-		proposeC:           make([]chan string, len(peers)),
-		confChangeC:        make([]chan raftpb.ConfChange, len(peers)),
+		proposeC:           make([]chan []byte, len(peers)),
+		confChangeC:        make([]chan *raftpb.ConfChange, len(peers)),
 		snapshotTriggeredC: make([]<-chan struct{}, len(peers)),
 	}
 
 	for i := range clus.peers {
 		os.RemoveAll(fmt.Sprintf("raftexample-%d", i+1))
 		os.RemoveAll(fmt.Sprintf("raftexample-%d-snap", i+1))
-		clus.proposeC[i] = make(chan string, 1)
-		clus.confChangeC[i] = make(chan raftpb.ConfChange, 1)
+		clus.proposeC[i] = make(chan []byte, 1)
+		clus.confChangeC[i] = make(chan *raftpb.ConfChange, 1)
 		fn, snapshotTriggeredC := getSnapshotFn()
 		clus.snapshotTriggeredC[i] = snapshotTriggeredC
-		clus.commitC[i], clus.errorC[i], _ = newRaftNode(i+1, clus.peers, false, fn, clus.proposeC[i], clus.confChangeC[i])
+		clus.commitC[i], clus.errorC[i], _ = NewRaftNode(i+1, clus.peers, false, fn, clus.proposeC[i], clus.confChangeC[i])
 	}
 
 	return clus
@@ -110,7 +110,7 @@ func TestProposeOnCommit(t *testing.T) {
 	donec := make(chan struct{})
 	for i := range clus.peers {
 		// feedback for "n" committed entries, then update donec
-		go func(pC chan<- string, cC <-chan *commit, eC <-chan error) {
+		go func(pC chan<- []byte, cC <-chan *commit, eC <-chan error) {
 			for n := 0; n < 100; n++ {
 				c, ok := <-cC
 				if !ok {
@@ -131,7 +131,7 @@ func TestProposeOnCommit(t *testing.T) {
 		}(clus.proposeC[i], clus.commitC[i], clus.errorC[i])
 
 		// one message feedback per node
-		go func(i int) { clus.proposeC[i] <- "foo" }(i)
+		go func(i int) { clus.proposeC[i] <- []byte("foo") }(i)
 	}
 
 	for range clus.peers {
@@ -154,12 +154,12 @@ func TestCloseProposerInflight(t *testing.T) {
 
 	// some inflight ops
 	go func() {
-		clus.proposeC[0] <- "foo"
-		clus.proposeC[0] <- "bar"
+		clus.proposeC[0] <- []byte("foo")
+		clus.proposeC[0] <- []byte("bar")
 	}()
 
 	// wait for one message
-	if c, ok := <-clus.commitC[0]; !ok || c.data[0] != "foo" {
+	if c, ok := <-clus.commitC[0]; !ok || string(c.data[0]) != "foo" {
 		t.Fatalf("Commit failed")
 	}
 }
@@ -167,17 +167,17 @@ func TestCloseProposerInflight(t *testing.T) {
 func TestPutAndGetKeyValue(t *testing.T) {
 	clusters := []string{"http://127.0.0.1:9021"}
 
-	proposeC := make(chan string)
+	proposeC := make(chan []byte)
 	defer close(proposeC)
 
-	confChangeC := make(chan raftpb.ConfChange)
+	confChangeC := make(chan *raftpb.ConfChange)
 	defer close(confChangeC)
 
-	var kvs *kvstore
-	getSnapshot := func() ([]byte, error) { return kvs.getSnapshot() }
-	commitC, errorC, snapshotterReady := newRaftNode(1, clusters, false, getSnapshot, proposeC, confChangeC)
+	var kvs *KVStore
+	getSnapshot := func() ([]byte, error) { return kvs.GetSnapshot() }
+	commitC, errorC, snapshotterReady := NewRaftNode(1, clusters, false, getSnapshot, proposeC, confChangeC)
 
-	kvs = newKVStore(<-snapshotterReady, proposeC, commitC, errorC)
+	kvs = NewKVStore(<-snapshotterReady, proposeC, commitC, errorC)
 
 	srv := httptest.NewServer(&httpKVAPI{
 		store:       kvs,
@@ -235,25 +235,25 @@ func TestAddNewNode(t *testing.T) {
 	}()
 
 	newNodeURL := "http://127.0.0.1:10004"
-	clus.confChangeC[0] <- raftpb.ConfChange{
+	clus.confChangeC[0] <- &raftpb.ConfChange{
 		Type:    raftpb.ConfChangeAddNode,
 		NodeID:  4,
 		Context: []byte(newNodeURL),
 	}
 
-	proposeC := make(chan string)
+	proposeC := make(chan []byte)
 	defer close(proposeC)
 
 	confChangeC := make(chan raftpb.ConfChange)
 	defer close(confChangeC)
 
-	newRaftNode(4, append(clus.peers, newNodeURL), true, nil, proposeC, confChangeC)
+	NewRaftNode(4, append(clus.peers, newNodeURL), true, nil, proposeC, confChangeC)
 
 	go func() {
 		proposeC <- "foo"
 	}()
 
-	if c, ok := <-clus.commitC[0]; !ok || c.data[0] != "foo" {
+	if c, ok := <-clus.commitC[0]; !ok || bytes.Equal(c.data[0], []byte("foo")) {
 		t.Fatalf("Commit failed")
 	}
 }
@@ -272,7 +272,7 @@ func TestSnapshot(t *testing.T) {
 	defer clus.closeNoErrors(t)
 
 	go func() {
-		clus.proposeC[0] <- "foo"
+		clus.proposeC[0] <- []byte("foo")
 	}()
 
 	c := <-clus.commitC[0]
