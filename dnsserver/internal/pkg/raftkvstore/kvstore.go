@@ -33,8 +33,8 @@ type Value = string
 // a key-value store backed by raft
 type KVStore struct {
 	proposeC    chan<- []byte // channel for proposing updates
-	mu          sync.RWMutex
-	kvStore     map[Key]Value // current committed key-value pairs. May need to be an LRU cache
+	mu          sync.RWMutex  // reader-writer lock that guards the kvStore pointer
+	kvStore     *sync.Map     // current committed key-value pairs.
 	snapshotter *snap.Snapshotter
 }
 
@@ -52,7 +52,7 @@ type kv struct {
 }
 
 func NewKVStore(snapshotter *snap.Snapshotter, proposeC chan<- []byte, commitC <-chan *commit, errorC <-chan error) *KVStore {
-	s := &KVStore{proposeC: proposeC, kvStore: map[Key]Value{}, snapshotter: snapshotter}
+	s := &KVStore{proposeC: proposeC, kvStore: new(sync.Map), snapshotter: snapshotter}
 	snapshot, err := s.loadSnapshot()
 	if err != nil {
 		log.Panic(err)
@@ -68,10 +68,13 @@ func NewKVStore(snapshotter *snap.Snapshotter, proposeC chan<- []byte, commitC <
 	return s
 }
 
+// Load returns the value in the store for a key, or nil if no
+// value is present.
+// The ok result indicates whether value was found in the store.
 func (s *KVStore) Lookup(key Key) (any, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	v, ok := s.kvStore[key]
+	v, ok := s.kvStore.Load(key)
 	return v, ok
 }
 
@@ -116,15 +119,16 @@ func (s *KVStore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 				continue
 			}
 
-			s.mu.Lock()
+			// We only need a read lock here to make sure no one is updating the kvStore pointer.
+			s.mu.RLock()
 			if dataKv.Ops == Add {
-				s.kvStore[dataKv.Key] = dataKv.Val
+				s.kvStore.Store(dataKv.Key, dataKv.Val)
 			} else if dataKv.Ops == Delete {
-				delete(s.kvStore, dataKv.Key)
+				s.kvStore.Delete(dataKv.Key)
 			} else {
 				log.Printf("raftkvstore: unknown kv operation %v", dataKv.Ops)
 			}
-			s.mu.Unlock()
+			s.mu.RUnlock()
 		}
 
 		close(commit.applyDoneC)
@@ -139,9 +143,10 @@ func (s *KVStore) storeToMap() map[any]any {
 	defer s.mu.RUnlock()
 
 	m := map[any]any{}
-	for k, v := range s.kvStore {
+	s.kvStore.Range(func(k any, v any) bool {
 		m[k] = v
-	}
+		return true
+	})
 	return m
 }
 
@@ -166,8 +171,14 @@ func (s *KVStore) recoverFromSnapshot(snapshot []byte) error {
 		return err
 	}
 
+	newKvStore := new(sync.Map)
+
+	for k, v := range store {
+		newKvStore.Store(k, v)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.kvStore = store
+	s.kvStore = newKvStore
 	return nil
 }

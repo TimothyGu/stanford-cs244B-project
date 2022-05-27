@@ -28,6 +28,12 @@ func (s *RaftCacheServer) Cache(ctx context.Context, req *pb.RaftCacheRequest) (
 	switch action {
 	case pb.RaftCacheRequest_LOOKUP:
 		value, ok := s.store.Lookup(key)
+
+		// nil cannot be converted to string
+		if !ok {
+			value = ""
+		}
+
 		return &pb.RaftCacheReply{Ok: ok, Value: value.(string)}, nil
 	case pb.RaftCacheRequest_STORE:
 		s.store.Propose(key, req.Value)
