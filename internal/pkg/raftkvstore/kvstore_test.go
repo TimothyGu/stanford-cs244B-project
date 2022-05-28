@@ -16,12 +16,14 @@ package raftkvstore
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 )
 
 func Test_kvstore_snapshot(t *testing.T) {
-	tm := map[Key]Value{"foo": "bar"}
-	s := &KVStore{kvStore: tm}
+	tm := sync.Map{}
+	tm.Store("foo", "bar")
+	s := &KVStore{kvStore: &tm}
 
 	v, _ := s.Lookup("foo")
 	if v != "bar" {
