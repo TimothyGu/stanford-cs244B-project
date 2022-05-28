@@ -33,9 +33,13 @@ type CacheValue struct {
 // This should eventually be a LRU cache.
 var cache sync.Map // CacheKey -> []CacheValue
 
-const externalServer = "1.1.1.1:53"
+const defaultExternalServer = "1.1.1.1:53"
 
-func externalLookup(query dns.Question) []CacheValue {
+func externalLookup(query dns.Question, externalServer string) []CacheValue {
+	if externalServer == "" {
+		externalServer = defaultExternalServer
+	}
+
 	var m dns.Msg
 	m.SetQuestion(query.Name, query.Qtype)
 	m.RecursionDesired = true
@@ -88,7 +92,7 @@ func externalLookup(query dns.Question) []CacheValue {
 }
 
 // Lookup does whatever is necessary to lookup a query.
-func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceRecord) {
+func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceRecord, externalServer string) {
 	defer wg.Done()
 
 	if !supportedQueries[query.Qtype] || query.Qclass != dns.ClassINET {
@@ -131,7 +135,7 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceR
 		log.Infof("local cache for %s is stale", query.Name)
 	}
 
-	cacheValues := externalLookup(query)
+	cacheValues := externalLookup(query, externalServer)
 	cache.Store(key, cacheValues)
 
 	for _, rec := range cacheValues {
