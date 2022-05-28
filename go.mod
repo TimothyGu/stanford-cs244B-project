@@ -5,7 +5,6 @@ go 1.18
 require (
 	github.com/buraksezer/consistent v0.9.0
 	github.com/cespare/xxhash v1.1.0
-	github.com/golang/protobuf v1.5.2
 	github.com/miekg/dns v1.1.49
 	github.com/sirupsen/logrus v1.8.1
 	go.etcd.io/etcd/client/pkg/v3 v3.5.4
@@ -23,6 +22,7 @@ require (
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/prometheus/client_golang v1.11.1 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
