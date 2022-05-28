@@ -244,13 +244,13 @@ func TestAddNewNode(t *testing.T) {
 	proposeC := make(chan []byte)
 	defer close(proposeC)
 
-	confChangeC := make(chan raftpb.ConfChange)
+	confChangeC := make(chan *raftpb.ConfChange)
 	defer close(confChangeC)
 
 	NewRaftNode(4, append(clus.peers, newNodeURL), true, nil, proposeC, confChangeC)
 
 	go func() {
-		proposeC <- "foo"
+		proposeC <- []byte("foo")
 	}()
 
 	if c, ok := <-clus.commitC[0]; !ok || bytes.Equal(c.data[0], []byte("foo")) {
