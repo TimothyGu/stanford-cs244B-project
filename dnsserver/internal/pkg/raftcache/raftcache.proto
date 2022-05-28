@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+option go_package = "github.com/TimothyGu/stanford-cs244B-project/raftcache";
+package raftcache;
+
+import "google/protobuf/empty.proto";
+
+// The service should be running on the raft cluster's leader
+service RaftCache {
+    rpc Cache(RaftCacheRequest) returns (RaftCacheReply) {}
+    rpc ConfChange(ConfChangeRequest) returns (google.protobuf.Empty) {}
+}
+
+message ConfChangeRequest {
+    // This should be a marshaled raftpb.ConfChange.
+    bytes buf = 1;
+}
+
+message RaftCacheRequest {
+    enum Action {
+        LOOKUP = 0;
+        STORE = 1;
+        DELETE = 2;
+    }
+
+    Action action = 1;
+    string key = 2;
+    string value = 3;
+}
+
+message RaftCacheReply {
+    bool ok = 1;
+    string value = 2;
+}
