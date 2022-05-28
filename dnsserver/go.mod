@@ -1,7 +1,6 @@
 module go.timothygu.me/stanford-cs244b-project
 
 go 1.18
-
 require (
 	github.com/buraksezer/consistent v0.9.0 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
