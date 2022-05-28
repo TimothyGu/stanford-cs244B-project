@@ -1,4 +1,4 @@
-package main
+package stanford_cs244B_project
 
 import "github.com/miekg/dns"
 

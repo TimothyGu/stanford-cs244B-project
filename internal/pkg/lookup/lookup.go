@@ -1,10 +1,12 @@
-package main
+package lookup
 
 import (
+	"go.timothygu.me/stanford-cs244b-project"
 	"math"
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 )
@@ -25,13 +27,12 @@ type CacheKey struct {
 }
 
 type CacheValue struct {
-	Type   ResourceRecordType
+	Type   stanford_cs244B_project.ResourceRecordType
 	Record dns.RR // TimeToLive field is indeterminate
 	Expiry time.Time
 }
 
-// This should eventually be a LRU cache.
-var cache sync.Map // CacheKey -> []CacheValue
+var cache *lru.Cache // CacheKey -> []CacheValue
 
 const defaultExternalServer = "1.1.1.1:53"
 
@@ -60,7 +61,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 			continue
 		}
 		cacheValues = append(cacheValues, CacheValue{
-			Type:   ResourceAnswer,
+			Type:   stanford_cs244B_project.ResourceAnswer,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
 		})
@@ -71,7 +72,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 			continue
 		}
 		cacheValues = append(cacheValues, CacheValue{
-			Type:   ResourceAuthority,
+			Type:   stanford_cs244B_project.ResourceAuthority,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
 		})
@@ -82,7 +83,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 			continue
 		}
 		cacheValues = append(cacheValues, CacheValue{
-			Type:   ResourceAdditional,
+			Type:   stanford_cs244B_project.ResourceAdditional,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
 		})
@@ -92,7 +93,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 }
 
 // Lookup does whatever is necessary to lookup a query.
-func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceRecord, externalServer string) {
+func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- stanford_cs244B_project.TypedResourceRecord, externalServer string) {
 	defer wg.Done()
 
 	if !supportedQueries[query.Qtype] || query.Qclass != dns.ClassINET {
@@ -105,7 +106,7 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceR
 		Type:       query.Qtype,
 	}
 	now := time.Now()
-	v, ok := cache.Load(key)
+	v, ok := cache.Get(key)
 	if ok {
 		log.Infof("found local cache for %s", query.Name)
 
@@ -121,7 +122,7 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceR
 				} else {
 					rr.Header().Ttl = uint32(ttl)
 				}
-				output <- TypedResourceRecord{
+				output <- stanford_cs244B_project.TypedResourceRecord{
 					Type:   rec.Type,
 					Record: rr,
 				}
@@ -136,10 +137,10 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- TypedResourceR
 	}
 
 	cacheValues := externalLookup(query, externalServer)
-	cache.Store(key, cacheValues)
+	cache.Add(key, cacheValues)
 
 	for _, rec := range cacheValues {
-		output <- TypedResourceRecord{
+		output <- stanford_cs244B_project.TypedResourceRecord{
 			Type:   rec.Type,
 			Record: rec.Record,
 		}
@@ -160,7 +161,7 @@ func InitDB() {
 
 		key := CacheKey{Type: dns.TypeA, DomainName: dns.Fqdn(name.Name)}
 		value := CacheValue{
-			Type: ResourceAnswer,
+			Type: stanford_cs244B_project.ResourceAnswer,
 			Record: &dns.A{
 				Hdr: dns.RR_Header{
 					Name:     dns.Fqdn(name.Name),
@@ -175,8 +176,8 @@ func InitDB() {
 		}
 		m[key] = append(m[key], value)
 	}
-
+	cache, _ = lru.New(1000)
 	for k, v := range m {
-		cache.Store(k, v)
+		cache.Add(k, v)
 	}
 }

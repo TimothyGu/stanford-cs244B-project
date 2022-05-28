@@ -1,9 +1,9 @@
-package main
+package externserve
 
 import (
-	"flag"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
+	"go.timothygu.me/stanford-cs244b-project"
 	"net"
 	"sync"
 
@@ -11,10 +11,8 @@ import (
 	"github.com/buraksezer/consistent"
 	// An example hashing function used in consistent package.
 	"github.com/cespare/xxhash"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
 )
-
-var useConsistentHashing = flag.Bool("ch", true, "use consistent hashing to distribute requests")
-var useLocalCache = flag.Bool("lc", true, "check local cache before sending requests to servers")
 
 // ServerNode contains the information for server code.
 type ServerNode struct {
@@ -73,10 +71,9 @@ func SetupServers() map[string]ServerNode {
 }
 
 func ListenAndServeUDP(localServerData *LocalServerData) {
-	
 	s := &dns.Server{
-		Addr:    ":8083",
-		Net:     "udp",
+		Addr: ":1053",
+		Net:  "udp",
 	}
 
 	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
@@ -84,19 +81,17 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		/**
 		 * lookup values
 		 */
-		output := make(chan TypedResourceRecord)
+		output := make(chan stanford_cs244B_project.TypedResourceRecord)
 
 		// Look up queries in parallel.
-		go func(output chan<- TypedResourceRecord) {
+		go func(output chan<- stanford_cs244B_project.TypedResourceRecord) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
 				var assignedServerNode ServerNode
-				if *useConsistentHashing {
-					assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				}
+				assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
 				externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go Lookup(&wg, query, output, externalServer)
+				go lookup.Lookup(&wg, query, output, externalServer)
 			}
 			wg.Wait()
 			close(output)
@@ -108,11 +103,11 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		var additionalResourceRecords []dns.RR
 		for rec := range output {
 			switch rec.Type {
-			case ResourceAnswer:
+			case stanford_cs244B_project.ResourceAnswer:
 				answerResourceRecords = append(answerResourceRecords, rec.Record)
-			case ResourceAuthority:
+			case stanford_cs244B_project.ResourceAuthority:
 				authorityResourceRecords = append(authorityResourceRecords, rec.Record)
-			case ResourceAdditional:
+			case stanford_cs244B_project.ResourceAdditional:
 				additionalResourceRecords = append(additionalResourceRecords, rec.Record)
 			}
 		}
@@ -149,17 +144,15 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 }
 
 func main() {
-	InitDB()
+	lookup.InitDB()
 
 	localServerData := LocalServerData{
 		serverNodes: SetupServers(),
 	}
 
-	if *useConsistentHashing {
-		localServerData.c = CreateConsistentHashing()
-		for _, n := range localServerData.serverNodes {
-			localServerData.c.Add(n)
-		}
+	localServerData.c = CreateConsistentHashing()
+	for _, n := range localServerData.serverNodes {
+		localServerData.c.Add(n)
 	}
 
 	ListenAndServeUDP(&localServerData)
