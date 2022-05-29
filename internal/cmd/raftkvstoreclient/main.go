@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"flag"
+
 	log "github.com/sirupsen/logrus"
-	pb "go.timothygu.me/stanford-cs244b-project/internal/pkg/raftcache"
 	"google.golang.org/grpc"
+
+	pb "go.timothygu.me/stanford-cs244b-project/internal/pkg/raftcache"
 )
 
 var (

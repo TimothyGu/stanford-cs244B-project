@@ -2,19 +2,22 @@ package main
 
 import (
 	"flag"
-	"github.com/miekg/dns"
-	log "github.com/sirupsen/logrus"
+	"fmt"
 	"net"
 	"sync"
 
-	// Consistent hashing with bounded load library
 	"github.com/buraksezer/consistent"
-	// An example hashing function used in consistent package.
 	"github.com/cespare/xxhash"
+	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
+
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/internserve"
 )
 
 var useConsistentHashing = flag.Bool("ch", true, "use consistent hashing to distribute requests")
 var useLocalCache = flag.Bool("lc", true, "check local cache before sending requests to servers")
+
+var basePort = flag.Int("port", 1058, "base port number (DNS = base, internapi = base+1)")
 
 // ServerNode contains the information for server code.
 type ServerNode struct {
@@ -73,10 +76,10 @@ func SetupServers() map[string]ServerNode {
 }
 
 func ListenAndServeUDP(localServerData *LocalServerData) {
-	
+
 	s := &dns.Server{
-		Addr:    ":8083",
-		Net:     "udp",
+		Addr: ":8083",
+		Net:  "udp",
 	}
 
 	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
@@ -162,5 +165,13 @@ func main() {
 		}
 	}
 
-	ListenAndServeUDP(&localServerData)
+	go ListenAndServeUDP(&localServerData)
+
+	internAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+1)
+
+	// TODO: this should be moved
+	cache := sync.Map{}
+	go internserve.Start(internAddr, &cache)
+
+	select {} // block forever
 }
