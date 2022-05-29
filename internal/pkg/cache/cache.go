@@ -4,9 +4,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/bluele/gcache"
 	lru "github.com/hashicorp/golang-lru"
 	"github.com/miekg/dns"
-
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
@@ -154,4 +154,3 @@ func (c *L2Cache) Keys() (keys []Key) {
 func (c *L2Cache) Len() int {
 	return (*lru.Cache)(c).Len()
 }
-

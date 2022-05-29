@@ -20,7 +20,7 @@ import (
 type InternAPIServer struct {
 	pb.UnimplementedInternAPIServer
 	m *chmembership.Membership
-	c *cache.Cache
+	c *cache.L2Cache
 }
 
 var _ pb.InternAPIServer = (*InternAPIServer)(nil)
@@ -88,7 +88,7 @@ func (s *InternAPIServer) Query(ctx context.Context, req *pb.QueryRequest) (*pb.
 	return res, nil
 }
 
-func Start(addr string, m *chmembership.Membership, c *cache.Cache) {
+func Start(addr string, m *chmembership.Membership, c *cache.L2Cache) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Panicln(err)
