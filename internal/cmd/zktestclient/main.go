@@ -4,21 +4,26 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-zookeeper/zk"
-)
-
-const (
-	ZK_SERVER = "54.219.185.237:2181"
+	zkc "go.timothygu.me/stanford-cs244b-project/internal/pkg/zookeeper"
 )
 
 func main() {
-	c, _, err := zk.Connect([]string{ZK_SERVER}, time.Second) //*10)
-	if err != nil {
-		panic(err)
+	zkc := zkc.NewZookeeperClient(time.Second)
+
+	children, watch := zkc.GetChildren("/", true)
+	fmt.Printf("%+v \n", children)
+
+	for _, child := range children {
+		fmt.Println("Node path:", child)
+		// if children, _ := zkc.GetChildren(child, false); len(children) == 0 {
+		// 	continue
+		// }
+
+		data, _ := zkc.GetData("/"+child, false)
+		fmt.Printf("Node: %v, Data: %v \n", child, data)
 	}
-	children, stat, _, err := c.ChildrenW("/")
-	if err != nil {
-		panic(err)
+
+	for e := range watch {
+		fmt.Printf("Watch event: %v.\n", e)
 	}
-	fmt.Printf("%+v %+v\n", children, stat)
 }
