@@ -1,6 +1,6 @@
 //go:build ignore
 
-package main
+package stanford_cs244B_project
 
 import (
 	_ "google.golang.org/grpc/cmd/protoc-gen-go-grpc"

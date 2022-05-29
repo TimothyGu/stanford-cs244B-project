@@ -3,7 +3,7 @@ package externserve
 import (
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
-	"go.timothygu.me/stanford-cs244b-project"
+
 	"net"
 	"sync"
 
@@ -12,6 +12,7 @@ import (
 	// An example hashing function used in consistent package.
 	"github.com/cespare/xxhash"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
 // ServerNode contains the information for server code.
@@ -81,10 +82,10 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		/**
 		 * lookup values
 		 */
-		output := make(chan stanford_cs244B_project.TypedResourceRecord)
+		output := make(chan types.TypedResourceRecord)
 
 		// Look up queries in parallel.
-		go func(output chan<- stanford_cs244B_project.TypedResourceRecord) {
+		go func(output chan<- types.TypedResourceRecord) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
@@ -103,11 +104,11 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		var additionalResourceRecords []dns.RR
 		for rec := range output {
 			switch rec.Type {
-			case stanford_cs244B_project.ResourceAnswer:
+			case types.ResourceAnswer:
 				answerResourceRecords = append(answerResourceRecords, rec.Record)
-			case stanford_cs244B_project.ResourceAuthority:
+			case types.ResourceAuthority:
 				authorityResourceRecords = append(authorityResourceRecords, rec.Record)
-			case stanford_cs244B_project.ResourceAdditional:
+			case types.ResourceAdditional:
 				additionalResourceRecords = append(additionalResourceRecords, rec.Record)
 			}
 		}
@@ -143,7 +144,7 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 	}
 }
 
-func main() {
+func Start() {
 	lookup.InitDB()
 
 	localServerData := LocalServerData{
