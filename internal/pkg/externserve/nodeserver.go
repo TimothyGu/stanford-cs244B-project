@@ -1,44 +1,35 @@
 package externserve
 
 import (
-	"net"
+	"context"
 	"sync"
 
 	"github.com/buraksezer/consistent"
-	"github.com/cespare/xxhash"
+	"github.com/dchest/siphash"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/chmembership"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
-// ServerNode contains the information for server code.
-type ServerNode struct {
-	hashString string
-	serverConn *net.UDPConn
-	ipAddr     string
-	portNum    string
-}
-
-func (n ServerNode) String() string {
-	return n.hashString
-}
-
 type LocalServerData struct {
-	serverNodes map[string]ServerNode
-	c           *consistent.Consistent
+	membership *chmembership.Membership
 }
-
-var localServerData LocalServerData
 
 // DNSRequestHash is the hash function used to distribute keys/members uniformly.
 type DNSRequestHash struct{}
 
+// Keys to SipHash, generated at random.
+// Ideally this should be decided at runtime and stored in Zookeeper.
+const (
+	siphash_k0 uint64 = 16038536194969526240
+	siphash_k1 uint64 = 11178038365157218530
+)
+
 func (h DNSRequestHash) Sum64(data []byte) uint64 {
-	// Used the default one provided by the consistent package.
-	// TODO: Test if this hash function can provide uniformity.
-	return xxhash.Sum64(data)
+	return siphash.Hash(siphash_k0, siphash_k1, data)
 }
 
 // CreateConsistentHashing creates a new consistent instance.
@@ -50,23 +41,6 @@ func CreateConsistentHashing() *consistent.Consistent {
 		Hasher:            DNSRequestHash{},
 	}
 	return consistent.New(nil, cfg)
-}
-
-func SetupServers() map[string]ServerNode {
-	m := make(map[string]ServerNode)
-	serverNode1 := ServerNode{
-		hashString: "node1",
-		ipAddr:     "13.56.11.133",
-		portNum:    "1053",
-	}
-	m[serverNode1.hashString] = serverNode1
-	serverNode2 := ServerNode{
-		hashString: "node2",
-		ipAddr:     "13.56.11.133",
-		portNum:    "1053",
-	}
-	m[serverNode2.hashString] = serverNode2
-	return m
 }
 
 func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
@@ -87,11 +61,19 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				// TODO: redo when zookeeper layer is working
-				// var assignedServerNode ServerNode
-				// assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				// externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go lookup.Lookup(&wg, query, output, "")
+				query := query
+				go func() {
+					defer wg.Done()
+					recs := lookup.Lookup(
+						context.Background(),
+						localServerData.membership,
+						query,
+						lookup.ExternalProfile,
+					)
+					for _, rec := range recs {
+						output <- rec
+					}
+				}()
 			}
 			wg.Wait()
 			close(output)
@@ -144,17 +126,10 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	}
 }
 
-func Start(addr string) {
-	lookup.InitDB()
-
+func Start(addr string, membership *chmembership.Membership) {
 	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
-		serverNodes: SetupServers(),
-	}
-
-	localServerData.c = CreateConsistentHashing()
-	for _, n := range localServerData.serverNodes {
-		localServerData.c.Add(n)
+		membership: membership,
 	}
 
 	ListenAndServeUDP(addr, &localServerData)
