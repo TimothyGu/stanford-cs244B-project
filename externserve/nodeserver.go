@@ -1,20 +1,17 @@
-package main
+package externserve
 
 import (
-	"flag"
-	"github.com/miekg/dns"
-	log "github.com/sirupsen/logrus"
 	"net"
 	"sync"
 
-	// Consistent hashing with bounded load library
 	"github.com/buraksezer/consistent"
-	// An example hashing function used in consistent package.
 	"github.com/cespare/xxhash"
-)
+	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
 
-var useConsistentHashing = flag.Bool("ch", true, "use consistent hashing to distribute requests")
-var useLocalCache = flag.Bool("lc", true, "check local cache before sending requests to servers")
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
+)
 
 // ServerNode contains the information for server code.
 type ServerNode struct {
@@ -72,11 +69,10 @@ func SetupServers() map[string]ServerNode {
 	return m
 }
 
-func ListenAndServeUDP(localServerData *LocalServerData) {
-	
+func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	s := &dns.Server{
-		Addr:    ":8083",
-		Net:     "udp",
+		Addr: addr,
+		Net:  "udp",
 	}
 
 	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
@@ -84,19 +80,18 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		/**
 		 * lookup values
 		 */
-		output := make(chan TypedResourceRecord)
+		output := make(chan types.TypedResourceRecord)
 
 		// Look up queries in parallel.
-		go func(output chan<- TypedResourceRecord) {
+		go func(output chan<- types.TypedResourceRecord) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				var assignedServerNode ServerNode
-				if *useConsistentHashing {
-					assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				}
-				externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go Lookup(&wg, query, output, externalServer)
+				// TODO: redo when zookeeper layer is working
+				// var assignedServerNode ServerNode
+				// assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
+				// externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
+				go lookup.Lookup(&wg, query, output, "")
 			}
 			wg.Wait()
 			close(output)
@@ -108,11 +103,11 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		var additionalResourceRecords []dns.RR
 		for rec := range output {
 			switch rec.Type {
-			case ResourceAnswer:
+			case types.ResourceAnswer:
 				answerResourceRecords = append(answerResourceRecords, rec.Record)
-			case ResourceAuthority:
+			case types.ResourceAuthority:
 				authorityResourceRecords = append(authorityResourceRecords, rec.Record)
-			case ResourceAdditional:
+			case types.ResourceAdditional:
 				additionalResourceRecords = append(additionalResourceRecords, rec.Record)
 			}
 		}
@@ -142,25 +137,25 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		}
 	})
 
+	log.Infof("externserve: starting at %s", s.Addr)
 	err := s.ListenAndServe()
 	if err != nil {
 		log.Fatalf("Error resolving UDP address: %v", err)
 	}
 }
 
-func main() {
-	InitDB()
+func Start(addr string) {
+	lookup.InitDB()
 
+	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
 		serverNodes: SetupServers(),
 	}
 
-	if *useConsistentHashing {
-		localServerData.c = CreateConsistentHashing()
-		for _, n := range localServerData.serverNodes {
-			localServerData.c.Add(n)
-		}
+	localServerData.c = CreateConsistentHashing()
+	for _, n := range localServerData.serverNodes {
+		localServerData.c.Add(n)
 	}
 
-	ListenAndServeUDP(&localServerData)
+	ListenAndServeUDP(addr, &localServerData)
 }

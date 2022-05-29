@@ -1,4 +1,4 @@
-package main
+package lookup
 
 import (
 	"encoding/binary"
