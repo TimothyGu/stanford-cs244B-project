@@ -3,6 +3,7 @@ module go.timothygu.me/stanford-cs244b-project
 go 1.18
 
 require (
+	github.com/bluele/gcache v0.0.2
 	github.com/buraksezer/consistent v0.9.0
 	github.com/cespare/xxhash v1.1.0
 	github.com/hashicorp/golang-lru v0.5.1
