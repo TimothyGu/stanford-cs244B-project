@@ -1,14 +1,13 @@
 package lookup
 
 import (
+	"github.com/miekg/dns"
+	log "github.com/sirupsen/logrus"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/cache"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 	"math"
 	"sync"
 	"time"
-
-	lru "github.com/hashicorp/golang-lru"
-	"github.com/miekg/dns"
-	log "github.com/sirupsen/logrus"
 )
 
 var supportedResponses = map[uint16]bool{
@@ -21,22 +20,11 @@ var supportedQueries = map[uint16]bool{
 	dns.TypeCNAME: true,
 }
 
-type CacheKey struct {
-	DomainName string
-	Type       uint16
-}
-
-type CacheValue struct {
-	Type   types.ResourceRecordType
-	Record dns.RR // TimeToLive field is indeterminate
-	Expiry time.Time
-}
-
-var cache *lru.Cache // CacheKey -> []CacheValue
+var localCache *cache.Cache // cache.Key -> []cache.Value
 
 const defaultExternalServer = "1.1.1.1:53"
 
-func externalLookup(query dns.Question, externalServer string) []CacheValue {
+func externalLookup(query dns.Question, externalServer string) []cache.Value {
 	if externalServer == "" {
 		externalServer = defaultExternalServer
 	}
@@ -54,13 +42,13 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 	}
 	log.Infof("received response for %s", query.Name)
 
-	var cacheValues []CacheValue
+	var cacheValues []cache.Value
 	for _, rec := range r.Answer {
 		if !supportedResponses[rec.Header().Rrtype] {
 			log.Infof("unknown answer type: %u (%T)", rec.Header().Rrtype, rec)
 			continue
 		}
-		cacheValues = append(cacheValues, CacheValue{
+		cacheValues = append(cacheValues, cache.Value{
 			Type:   types.ResourceAnswer,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
@@ -71,7 +59,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 			log.Infof("unknown authority type: %u (%T)", rec.Header().Rrtype, rec)
 			continue
 		}
-		cacheValues = append(cacheValues, CacheValue{
+		cacheValues = append(cacheValues, cache.Value{
 			Type:   types.ResourceAuthority,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
@@ -82,7 +70,7 @@ func externalLookup(query dns.Question, externalServer string) []CacheValue {
 			log.Infof("unknown additional type: %u (%T)", rec.Header().Rrtype, rec)
 			continue
 		}
-		cacheValues = append(cacheValues, CacheValue{
+		cacheValues = append(cacheValues, cache.Value{
 			Type:   types.ResourceAdditional,
 			Record: rec,
 			Expiry: now.Add(time.Duration(rec.Header().Ttl) * time.Second),
@@ -101,16 +89,16 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- types.TypedRes
 	}
 	query.Name = dns.Fqdn(query.Name)
 
-	key := CacheKey{
+	key := cache.Key{
 		DomainName: query.Name,
 		Type:       query.Qtype,
 	}
 	now := time.Now()
-	v, ok := cache.Get(key)
+	v, ok := localCache.Get(key)
 	if ok {
 		log.Infof("found local cache for %s", query.Name)
 
-		records := v.([]CacheValue)
+		records := v.([]cache.Value)
 		foundUpToDate := false
 		for _, rec := range records {
 			ttl := rec.Expiry.Sub(now).Seconds()
@@ -137,7 +125,7 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- types.TypedRes
 	}
 
 	cacheValues := externalLookup(query, externalServer)
-	cache.Add(key, cacheValues)
+	localCache.Add(key, cacheValues)
 
 	for _, rec := range cacheValues {
 		output <- types.TypedResourceRecord{
@@ -154,13 +142,13 @@ func InitDB() {
 		return
 	}
 
-	m := map[CacheKey][]CacheValue{}
+	m := map[cache.Key][]cache.Value{}
 
 	for _, name := range names {
 		log.Infof("adding %s local entry to %v", name.Name, name.Address)
 
-		key := CacheKey{Type: dns.TypeA, DomainName: dns.Fqdn(name.Name)}
-		value := CacheValue{
+		key := cache.Key{Type: dns.TypeA, DomainName: dns.Fqdn(name.Name)}
+		value := cache.Value{
 			Type: types.ResourceAnswer,
 			Record: &dns.A{
 				Hdr: dns.RR_Header{
@@ -176,8 +164,10 @@ func InitDB() {
 		}
 		m[key] = append(m[key], value)
 	}
-	cache, _ = lru.New(1000)
+
+	localCache = cache.New()
+
 	for k, v := range m {
-		cache.Add(k, v)
+		localCache.Add(k, v)
 	}
 }
