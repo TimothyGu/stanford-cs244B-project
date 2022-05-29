@@ -5,6 +5,8 @@ go 1.18
 require (
 	github.com/buraksezer/consistent v0.9.0
 	github.com/cespare/xxhash v1.1.0
+	github.com/go-zookeeper/zk v1.0.2
+	github.com/golang-collections/collections v0.0.0-20130729185459-604e922904d3
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/miekg/dns v1.1.49
 	github.com/sirupsen/logrus v1.8.1
