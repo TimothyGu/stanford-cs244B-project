@@ -1,4 +1,6 @@
-//go:build ignore
+// Tools import file: https://marcofranssen.nl/manage-go-tools-via-go-modules
+
+//go:build tools
 
 package main
 
