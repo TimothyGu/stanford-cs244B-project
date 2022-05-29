@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	"github.com/buraksezer/consistent"
-	"github.com/cespare/xxhash"
+	"github.com/dchest/siphash"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
@@ -20,10 +20,15 @@ type LocalServerData struct {
 // DNSRequestHash is the hash function used to distribute keys/members uniformly.
 type DNSRequestHash struct{}
 
+// Keys to SipHash, generated at random.
+// Ideally this should be decided at runtime and stored in Zookeeper.
+const (
+	siphash_k0 uint64 = 16038536194969526240
+	siphash_k1 uint64 = 11178038365157218530
+)
+
 func (h DNSRequestHash) Sum64(data []byte) uint64 {
-	// Used the default one provided by the consistent package.
-	// TODO: Test if this hash function can provide uniformity.
-	return xxhash.Sum64(data)
+	return siphash.Hash(siphash_k0, siphash_k1, data)
 }
 
 // CreateConsistentHashing creates a new consistent instance.
