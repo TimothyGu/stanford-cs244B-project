@@ -1,10 +1,11 @@
-// Package cache implements a DNS cache.
 package cache
 
 import (
-	"github.com/miekg/dns"
-	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru"
+	"github.com/miekg/dns"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
 var SupportedResponses = map[uint16]bool{
@@ -30,15 +31,34 @@ type TypedResourceRecord struct {
 	Record dns.RR
 }
 
-type CacheKey struct {
+const Size = 1000
+
+type Cache lru.Cache
+
+func New() *Cache {
+	cache, _ := lru.New(Size)
+	return cache
+}
+
+func (c *Cache) Add(k Key, v []Value) {
+	(*lru.Cache)(c).Add(k, v)
+}
+
+func (c *Cache) Get(k Key) (value []Value, ok bool) {
+	vv, ok := (*lru.Cache)(c).Get(k)
+	for _, v := range vv {
+		value = append(value, v)
+	}
+	return value, ok
+}
+
+type Key struct {
 	DomainName string
 	Type       uint16
 }
 
-type CacheValue struct {
-	Type   ResourceRecordType
+type Value struct {
+	Type   types.ResourceRecordType
 	Record dns.RR // TimeToLive field is indeterminate
 	Expiry time.Time
 }
-
-type Cache = sync.Map // CacheKey -> CacheValue

@@ -1,8 +1,6 @@
-package main
+package externserve
 
 import (
-	"flag"
-	"fmt"
 	"net"
 	"sync"
 
@@ -11,13 +9,9 @@ import (
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
-	"go.timothygu.me/stanford-cs244b-project/internal/pkg/internserve"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
-
-var useConsistentHashing = flag.Bool("ch", true, "use consistent hashing to distribute requests")
-var useLocalCache = flag.Bool("lc", true, "check local cache before sending requests to servers")
-
-var basePort = flag.Int("port", 1058, "base port number (DNS = base, internapi = base+1)")
 
 // ServerNode contains the information for server code.
 type ServerNode struct {
@@ -76,9 +70,8 @@ func SetupServers() map[string]ServerNode {
 }
 
 func ListenAndServeUDP(localServerData *LocalServerData) {
-
 	s := &dns.Server{
-		Addr: ":8083",
+		Addr: ":1053",
 		Net:  "udp",
 	}
 
@@ -87,19 +80,17 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		/**
 		 * lookup values
 		 */
-		output := make(chan TypedResourceRecord)
+		output := make(chan types.TypedResourceRecord)
 
 		// Look up queries in parallel.
-		go func(output chan<- TypedResourceRecord) {
+		go func(output chan<- types.TypedResourceRecord) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
 				var assignedServerNode ServerNode
-				if *useConsistentHashing {
-					assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				}
+				assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
 				externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go Lookup(&wg, query, output, externalServer)
+				go lookup.Lookup(&wg, query, output, externalServer)
 			}
 			wg.Wait()
 			close(output)
@@ -111,11 +102,11 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		var additionalResourceRecords []dns.RR
 		for rec := range output {
 			switch rec.Type {
-			case ResourceAnswer:
+			case types.ResourceAnswer:
 				answerResourceRecords = append(answerResourceRecords, rec.Record)
-			case ResourceAuthority:
+			case types.ResourceAuthority:
 				authorityResourceRecords = append(authorityResourceRecords, rec.Record)
-			case ResourceAdditional:
+			case types.ResourceAdditional:
 				additionalResourceRecords = append(additionalResourceRecords, rec.Record)
 			}
 		}
@@ -151,27 +142,17 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 	}
 }
 
-func main() {
-	InitDB()
+func Start() {
+	lookup.InitDB()
 
 	localServerData := LocalServerData{
 		serverNodes: SetupServers(),
 	}
 
-	if *useConsistentHashing {
-		localServerData.c = CreateConsistentHashing()
-		for _, n := range localServerData.serverNodes {
-			localServerData.c.Add(n)
-		}
+	localServerData.c = CreateConsistentHashing()
+	for _, n := range localServerData.serverNodes {
+		localServerData.c.Add(n)
 	}
 
-	go ListenAndServeUDP(&localServerData)
-
-	internAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+1)
-
-	// TODO: this should be moved
-	cache := sync.Map{}
-	go internserve.Start(internAddr, &cache)
-
-	select {} // block forever
+	ListenAndServeUDP(&localServerData)
 }
