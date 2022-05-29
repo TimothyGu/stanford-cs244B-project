@@ -86,21 +86,9 @@ func (m *Membership) getOldServers() set.Set {
 
 func (m *Membership) initMembership() {
 	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
-	nodesData, nodeChannels := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, true)
-
-	// oldServers := m.getOldServers()
-
-	// var newServers set.Set
-	// for _, node := range nodes {
-	// 	newServers.Insert(node)
-	// }
-
-	// intersection := oldServers.Intersection(&newServers)
-	// removedServers := intersection.Difference(&oldServers)
-	// addedServers := intersection.Difference(&newServers)
+	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.dirWatch = channel
 
 	for i := 0; i < len(nodes); i++ {
@@ -110,9 +98,51 @@ func (m *Membership) initMembership() {
 		serverNode := &ServerNode{Name: serverName, Addr: serverAddr}
 		m.ch.Add(serverNode)
 		m.aliveNodes.Store(serverName, serverNode)
+	}
+	m.mu.Unlock()
 
-		// Monitor membership
-		go m.MonitorNode(serverName, m.getPath(nodes[i]), nodeChannels[i])
+	// Monitor membership
+	go m.MonitorMembershipDirectory()
+}
+
+func (m *Membership) MonitorMembershipDirectory() {
+	for {
+		evt := <-m.dirWatch
+
+		if evt.Type != zk.EventNodeChildrenChanged {
+			log.Println("chmembership: MonitorMembershipDirectory: ignoring operation", evt.Type.String())
+		} else {
+			nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
+			nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
+
+			oldServers := m.getOldServers()
+
+			var newServers set.Set
+			var newServerNodes map[string]*ServerNode
+			for i, node := range nodes {
+				newServers.Insert(node)
+				newServerNodes[node] = &ServerNode{Name: node, Addr: nodesData[i]}
+			}
+
+			intersection := oldServers.Intersection(&newServers)
+			removedServers := intersection.Difference(&oldServers)
+			addedServers := intersection.Difference(&newServers)
+
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			removedServers.Do(func(server interface{}) {
+				m.aliveNodes.Delete(server)
+				m.ch.Remove(server.(string))
+			})
+
+			addedServers.Do(func(server interface{}) {
+				serverNode := newServerNodes[server.(string)]
+				m.aliveNodes.Store(server, serverNode)
+				m.ch.Add(serverNode)
+			})
+
+			m.dirWatch = channel
+		}
 	}
 }
 
