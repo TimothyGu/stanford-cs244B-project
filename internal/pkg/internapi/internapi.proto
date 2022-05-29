@@ -8,8 +8,8 @@ import "google/protobuf/timestamp.proto";
 
 service InternAPI {
   rpc NewContent(NewContentRequest) returns (google.protobuf.Empty) {}
-
   rpc InternalListKeys(google.protobuf.Empty) returns (ListKeysResponse) {}
+  rpc Query(QueryRequest) returns (QueryResponse) {}
 }
 
 // Batch question-response pairs.
@@ -20,6 +20,14 @@ message NewContentRequest {
 message DNSQuestionResponse {
   DNSQuestion question = 1;
   repeated DNSResponse response = 2;
+}
+
+message QueryRequest {
+  DNSQuestion question = 1;
+}
+
+message QueryResponse {
+  repeated DNSResponse response = 1;
 }
 
 // Same as dns.Question

@@ -1,6 +1,7 @@
 package externserve
 
 import (
+	"context"
 	"sync"
 
 	"github.com/buraksezer/consistent"
@@ -60,9 +61,19 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				// TODO: Use Cache::Key object instead of query.Name
-				assignedServerNode := localServerData.membership.LocateServer([]byte(query.Name))
-				go lookup.Lookup(&wg, query, output, assignedServerNode.Addr)
+				query := query
+				go func() {
+					defer wg.Done()
+					recs := lookup.Lookup(
+						context.Background(),
+						localServerData.membership,
+						query,
+						lookup.ExternalProfile,
+					)
+					for _, rec := range recs {
+						output <- rec
+					}
+				}()
 			}
 			wg.Wait()
 			close(output)
@@ -116,8 +127,6 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 }
 
 func Start(addr string, membership *chmembership.Membership) {
-	lookup.InitDB()
-
 	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
 		membership: membership,

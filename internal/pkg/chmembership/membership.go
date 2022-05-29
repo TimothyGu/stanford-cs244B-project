@@ -39,20 +39,23 @@ type Membership struct {
 	mu         sync.RWMutex
 	aliveNodes sync.Map      // ServerName -> *ServerNode
 	ch         *c.Consistent // ServerNode
+	self       ServerNode
 }
 
-func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode ServerNode, servers []string) *Membership {
+func NewMembership(consistent *c.Consistent, timeout time.Duration, self ServerNode, servers []string) *Membership {
 	z := zkc.NewZookeeperClient(timeout, servers)
 
 	m := &Membership{
-		ch:  consistent,
-		zkc: z,
+		ch:   consistent,
+		zkc:  z,
+		self: self,
 	}
-	z.Create(serverNode.Name, getAbsolutePath(serverNode.Addr), zk.FlagEphemeral)
 	return m
 }
 
 func (m *Membership) Init() {
+	m.zkc.Create(m.self.Name, getAbsolutePath(m.self.Addr), zk.FlagEphemeral)
+
 	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
 	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
 
@@ -71,6 +74,10 @@ func (m *Membership) Init() {
 
 	// Monitor membership
 	go m.MonitorMembershipDirectory()
+}
+
+func (m *Membership) Self() ServerNode {
+	return m.self
 }
 
 // key -> ServerNode

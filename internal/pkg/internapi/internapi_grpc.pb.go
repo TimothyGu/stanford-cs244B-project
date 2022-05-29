@@ -26,6 +26,7 @@ const _ = grpc.SupportPackageIsVersion7
 type InternAPIClient interface {
 	NewContent(ctx context.Context, in *NewContentRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	InternalListKeys(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListKeysResponse, error)
+	Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error)
 }
 
 type internAPIClient struct {
@@ -54,12 +55,22 @@ func (c *internAPIClient) InternalListKeys(ctx context.Context, in *emptypb.Empt
 	return out, nil
 }
 
+func (c *internAPIClient) Query(ctx context.Context, in *QueryRequest, opts ...grpc.CallOption) (*QueryResponse, error) {
+	out := new(QueryResponse)
+	err := c.cc.Invoke(ctx, "/internapi.InternAPI/Query", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // InternAPIServer is the server API for InternAPI service.
 // All implementations must embed UnimplementedInternAPIServer
 // for forward compatibility
 type InternAPIServer interface {
 	NewContent(context.Context, *NewContentRequest) (*emptypb.Empty, error)
 	InternalListKeys(context.Context, *emptypb.Empty) (*ListKeysResponse, error)
+	Query(context.Context, *QueryRequest) (*QueryResponse, error)
 	mustEmbedUnimplementedInternAPIServer()
 }
 
@@ -72,6 +83,9 @@ func (UnimplementedInternAPIServer) NewContent(context.Context, *NewContentReque
 }
 func (UnimplementedInternAPIServer) InternalListKeys(context.Context, *emptypb.Empty) (*ListKeysResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InternalListKeys not implemented")
+}
+func (UnimplementedInternAPIServer) Query(context.Context, *QueryRequest) (*QueryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Query not implemented")
 }
 func (UnimplementedInternAPIServer) mustEmbedUnimplementedInternAPIServer() {}
 
@@ -122,6 +136,24 @@ func _InternAPI_InternalListKeys_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _InternAPI_Query_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InternAPIServer).Query(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/internapi.InternAPI/Query",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InternAPIServer).Query(ctx, req.(*QueryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // InternAPI_ServiceDesc is the grpc.ServiceDesc for InternAPI service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -136,6 +168,10 @@ var InternAPI_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InternalListKeys",
 			Handler:    _InternAPI_InternalListKeys_Handler,
+		},
+		{
+			MethodName: "Query",
+			Handler:    _InternAPI_Query_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
