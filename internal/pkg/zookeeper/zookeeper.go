@@ -72,3 +72,15 @@ func (z *ZookeeperClient) GetChildren(path string, watch bool) ([]string, <-chan
 
 	return children, channel
 }
+
+func (z *ZookeeperClient) GetDataFromChildren(path string, children []string, watch bool) ([]string, []<-chan zk.Event) {
+	var childrenData []string
+	var childrenWatch []<-chan zk.Event
+	for _, child := range children {
+		data, channel := z.GetData(path+"/"+child, watch)
+		childrenData = append(childrenData, data)
+		childrenWatch = append(childrenWatch, channel)
+	}
+
+	return childrenData, childrenWatch
+}
