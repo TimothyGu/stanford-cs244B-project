@@ -7,6 +7,7 @@ import (
 
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
+
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/cache"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
@@ -21,7 +22,7 @@ var supportedQueries = map[uint16]bool{
 	dns.TypeCNAME: true,
 }
 
-var localCache *cache.Cache // cache.Key -> []cache.Value
+var L2Cache = cache.New()
 
 const defaultExternalServer = "1.1.1.1:53"
 
@@ -95,11 +96,10 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- types.TypedRes
 		Type:       query.Qtype,
 	}
 	now := time.Now()
-	v, ok := localCache.Get(key)
+	records, ok := L2Cache.Get(key)
 	if ok {
 		log.Infof("found local cache for %s", query.Name)
 
-		records := v.([]cache.Value)
 		foundUpToDate := false
 		for _, rec := range records {
 			ttl := rec.Expiry.Sub(now).Seconds()
@@ -126,7 +126,7 @@ func Lookup(wg *sync.WaitGroup, query dns.Question, output chan<- types.TypedRes
 	}
 
 	cacheValues := externalLookup(query, externalServer)
-	localCache.Add(key, cacheValues)
+	L2Cache.Add(key, cacheValues)
 
 	for _, rec := range cacheValues {
 		output <- types.TypedResourceRecord{
@@ -166,9 +166,7 @@ func InitDB() {
 		m[key] = append(m[key], value)
 	}
 
-	localCache = cache.New()
-
 	for k, v := range m {
-		localCache.Add(k, v)
+		L2Cache.Add(k, v)
 	}
 }

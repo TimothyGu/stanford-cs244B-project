@@ -3,7 +3,6 @@ package internserve
 import (
 	"context"
 	"net"
-	"sync"
 
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
@@ -14,22 +13,20 @@ import (
 	pb "go.timothygu.me/stanford-cs244b-project/internal/pkg/internapi"
 )
 
-type Cache = sync.Map
-
 type InternAPIServer struct {
 	pb.UnimplementedInternAPIServer
-	c *Cache
+	c *cache.Cache
 }
 
 var _ pb.InternAPIServer = (*InternAPIServer)(nil)
 
 func (s *InternAPIServer) NewContent(ctx context.Context, req *pb.NewContentRequest) (*emptypb.Empty, error) {
 	for _, datum := range req.GetContent() {
-		key := cache.CacheKey{
+		key := cache.Key{
 			DomainName: datum.GetQuestion().GetName(),
 			Type:       uint16(datum.GetQuestion().GetQtype()),
 		}
-		var value []cache.CacheValue
+		var value []cache.Value
 		for _, res := range datum.GetResponse() {
 			expiry := res.GetExpiry().AsTime()
 			rr, _, err := dns.UnpackRR(res.GetRr(), 0)
@@ -37,14 +34,14 @@ func (s *InternAPIServer) NewContent(ctx context.Context, req *pb.NewContentRequ
 				log.Warnf("internapi: UnpackRR: %v", err)
 				continue
 			}
-			value = append(value, cache.CacheValue{
+			value = append(value, cache.Value{
 				Type:   res.GetType().As(),
 				Record: rr,
 				Expiry: expiry,
 			})
 		}
 		if len(value) != 0 {
-			s.c.Store(key, value)
+			s.c.Add(key, value)
 		}
 	}
 	return new(emptypb.Empty), nil
@@ -52,18 +49,17 @@ func (s *InternAPIServer) NewContent(ctx context.Context, req *pb.NewContentRequ
 
 func (s *InternAPIServer) InternalListKeys(ctx context.Context, _ *emptypb.Empty) (*pb.ListKeysResponse, error) {
 	res := new(pb.ListKeysResponse)
-	s.c.Range(func(key, value any) bool {
-		ck := key.(cache.CacheKey)
+	kk := s.c.Keys()
+	for _, k := range kk {
 		res.Questions = append(res.Questions, &pb.DNSQuestion{
-			Name:  ck.DomainName,
-			Qtype: uint32(ck.Type),
+			Name:  k.DomainName,
+			Qtype: uint32(k.Type),
 		})
-		return true
-	})
+	}
 	return res, nil
 }
 
-func Start(addr string, c *Cache) {
+func Start(addr string, c *cache.Cache) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Panicln(err)
