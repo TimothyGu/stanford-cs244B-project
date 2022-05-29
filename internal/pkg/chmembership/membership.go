@@ -15,7 +15,7 @@ import (
 const CH_MEMBERSHIP_PATH = "/chmembership"
 
 func getAbsolutePath(relativePath string) string {
-	return CH_MEMBERSHIP_PATH + "/" + relativePath
+	return zkc.GetAbsolutePath(CH_MEMBERSHIP_PATH, relativePath)
 }
 
 /*

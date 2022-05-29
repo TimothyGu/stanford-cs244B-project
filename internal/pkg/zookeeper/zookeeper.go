@@ -7,6 +7,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func GetAbsolutePath(rootPath string, relativePath string) string {
+	return rootPath + "/" + relativePath
+}
+
 type ZookeeperClient struct {
 	zkConn *zk.Conn
 }
@@ -71,7 +75,7 @@ func (z *ZookeeperClient) GetChildren(path string, watch bool) (children []strin
 
 func (z *ZookeeperClient) GetDataFromChildren(path string, children []string, watch bool) (childrenData []string, childrenWatch []<-chan zk.Event) {
 	for _, child := range children {
-		data, channel := z.GetData(path+"/"+child, watch)
+		data, channel := z.GetData(GetAbsolutePath(path, child), watch)
 		childrenData = append(childrenData, data)
 		childrenWatch = append(childrenWatch, channel)
 	}
