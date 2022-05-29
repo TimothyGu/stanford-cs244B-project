@@ -26,3 +26,7 @@ go.work
 # Temp files
 *.wal
 *.tmp
+
+# Compiled files
+protoc-gen-go
+protoc-gen-go-grpc
