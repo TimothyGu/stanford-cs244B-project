@@ -38,8 +38,8 @@ type Membership struct {
 	dirWatch   <-chan zk.Event
 }
 
-func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode ServerNode) *Membership {
-	z := zkc.NewZookeeperClient(timeout)
+func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode ServerNode, servers []string) *Membership {
+	z := zkc.NewZookeeperClient(timeout, servers)
 
 	m := &Membership{
 		ch:  consistent,
@@ -54,14 +54,14 @@ func (m *Membership) Init() {
 }
 
 // key -> ServerNode
-func (m *Membership) LocateServer(key []byte) c.Member {
+func (m *Membership) LocateServer(key []byte) *ServerNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.ch.LocateKey(key)
+	return m.ch.LocateKey(key).(*ServerNode)
 }
 
 // []key -> []ServerNode
-func (m *Membership) GetClosestN(key []byte, count int) []c.Member {
+func (m *Membership) GetClosestN(key []byte, count int) []*ServerNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	members, err := m.ch.GetClosestN(key, count)
@@ -69,7 +69,12 @@ func (m *Membership) GetClosestN(key []byte, count int) []c.Member {
 		log.Panic(err)
 	}
 
-	return members
+	var serverNodes []*ServerNode
+	for _, member := range members {
+		serverNodes = append(serverNodes, member.(*ServerNode))
+	}
+
+	return serverNodes
 }
 
 func (m *Membership) getOldServers() set.Set {

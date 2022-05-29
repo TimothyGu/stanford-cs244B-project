@@ -7,14 +7,12 @@ import (
 	"github.com/go-zookeeper/zk"
 )
 
-const ZK_SERVER = "54.219.185.237:2181"
-
 type ZookeeperClient struct {
 	zkConn *zk.Conn
 }
 
-func NewZookeeperClient(timeout time.Duration) *ZookeeperClient {
-	c, _, err := zk.Connect([]string{ZK_SERVER}, timeout)
+func NewZookeeperClient(timeout time.Duration, servers []string) *ZookeeperClient {
+	c, _, err := zk.Connect(servers, timeout)
 	if err != nil {
 		panic(err)
 	}

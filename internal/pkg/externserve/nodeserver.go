@@ -1,7 +1,6 @@
 package externserve
 
 import (
-	"net"
 	"sync"
 
 	"github.com/buraksezer/consistent"
@@ -9,28 +8,14 @@ import (
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/chmembership"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
-// ServerNode contains the information for server code.
-type ServerNode struct {
-	hashString string
-	serverConn *net.UDPConn
-	ipAddr     string
-	portNum    string
-}
-
-func (n ServerNode) String() string {
-	return n.hashString
-}
-
 type LocalServerData struct {
-	serverNodes map[string]ServerNode
-	c           *consistent.Consistent
+	membership *chmembership.Membership
 }
-
-var localServerData LocalServerData
 
 // DNSRequestHash is the hash function used to distribute keys/members uniformly.
 type DNSRequestHash struct{}
@@ -52,23 +37,6 @@ func CreateConsistentHashing() *consistent.Consistent {
 	return consistent.New(nil, cfg)
 }
 
-func SetupServers() map[string]ServerNode {
-	m := make(map[string]ServerNode)
-	serverNode1 := ServerNode{
-		hashString: "node1",
-		ipAddr:     "13.56.11.133",
-		portNum:    "1053",
-	}
-	m[serverNode1.hashString] = serverNode1
-	serverNode2 := ServerNode{
-		hashString: "node2",
-		ipAddr:     "13.56.11.133",
-		portNum:    "1053",
-	}
-	m[serverNode2.hashString] = serverNode2
-	return m
-}
-
 func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	s := &dns.Server{
 		Addr: addr,
@@ -87,11 +55,9 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				// TODO: redo when zookeeper layer is working
-				// var assignedServerNode ServerNode
-				// assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				// externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go lookup.Lookup(&wg, query, output, "")
+				// TODO: Use Cache::Key object instead of query.Name
+				assignedServerNode := localServerData.membership.LocateServer([]byte(query.Name))
+				go lookup.Lookup(&wg, query, output, assignedServerNode.Addr)
 			}
 			wg.Wait()
 			close(output)
@@ -144,17 +110,12 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	}
 }
 
-func Start(addr string) {
+func Start(addr string, membership *chmembership.Membership) {
 	lookup.InitDB()
 
 	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
-		serverNodes: SetupServers(),
-	}
-
-	localServerData.c = CreateConsistentHashing()
-	for _, n := range localServerData.serverNodes {
-		localServerData.c.Add(n)
+		membership: membership,
 	}
 
 	ListenAndServeUDP(addr, &localServerData)
