@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package internapi;
+option go_package = "go.timothygu.me/stanford-cs244b-project/internal/pkg/internapi";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service InternAPI {
+  rpc NewContent(NewContentRequest) returns (google.protobuf.Empty) {}
+
+  rpc InternalListKeys(google.protobuf.Empty) returns (ListKeysResponse) {}
+}
+
+// Batch question-response pairs.
+message NewContentRequest {
+  repeated DNSQuestionResponse content = 1;
+}
+
+message DNSQuestionResponse {
+  DNSQuestion question = 1;
+  repeated DNSResponse response = 2;
+}
+
+// Same as dns.Question
+message DNSQuestion {
+  string name = 1;
+  uint32 qtype = 2;
+}
+
+message DNSResponse {
+  enum Type {
+    ANSWER = 0;
+    AUTHORITY = 1;
+    ADDITIONAL = 2;
+  }
+  bytes rr = 1; // packed dns.RR
+  google.protobuf.Timestamp expiry = 2;
+  Type type = 3;
+}
+
+message ListKeysResponse {
+  repeated DNSQuestion questions = 1;
+}

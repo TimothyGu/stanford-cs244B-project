@@ -1,6 +1,8 @@
-package main
+// Tools import file: https://marcofranssen.nl/manage-go-tools-via-go-modules
 
-//go:build ignore
+//go:build tools
+
+package main
 
 import (
 	_ "google.golang.org/grpc/cmd/protoc-gen-go-grpc"

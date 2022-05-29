@@ -1,4 +1,4 @@
-package main
+package types
 
 import "github.com/miekg/dns"
 
