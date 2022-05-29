@@ -1,13 +1,14 @@
 package chmembership
 
 import (
-	"log"
 	"sync"
 	"time"
 
 	c "github.com/buraksezer/consistent"
 	"github.com/go-zookeeper/zk"
-	set "github.com/golang-collections/collections/set"
+	"github.com/golang-collections/collections/set"
+	log "github.com/sirupsen/logrus"
+
 	zkc "go.timothygu.me/stanford-cs244b-project/internal/pkg/zookeeper"
 )
 
@@ -31,11 +32,13 @@ func (sa *ServerNode) String() string {
 }
 
 type Membership struct {
-	aliveNodes sync.Map // ServerName -> *ServerNode
+	zkc      *zkc.ZookeeperClient
+	dirWatch <-chan zk.Event
+
+	// mu protects aliveNodes and ch
 	mu         sync.RWMutex
+	aliveNodes sync.Map      // ServerName -> *ServerNode
 	ch         *c.Consistent // ServerNode
-	zkc        *zkc.ZookeeperClient
-	dirWatch   <-chan zk.Event
 }
 
 func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode ServerNode, servers []string) *Membership {
@@ -50,7 +53,24 @@ func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode S
 }
 
 func (m *Membership) Init() {
-	m.initMembership()
+	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
+	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
+
+	m.mu.Lock()
+	m.dirWatch = channel
+
+	for i := range nodes {
+		// Add to consistent hash ring
+		serverName := nodes[i]
+		serverAddr := nodesData[i]
+		serverNode := &ServerNode{Name: serverName, Addr: serverAddr}
+		m.ch.Add(serverNode)
+		m.aliveNodes.Store(serverName, serverNode)
+	}
+	m.mu.Unlock()
+
+	// Monitor membership
+	go m.MonitorMembershipDirectory()
 }
 
 // key -> ServerNode
@@ -63,8 +83,8 @@ func (m *Membership) LocateServer(key []byte) *ServerNode {
 // []key -> []ServerNode
 func (m *Membership) GetClosestN(key []byte, count int) []*ServerNode {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 	members, err := m.ch.GetClosestN(key, count)
+	m.mu.RUnlock()
 	if err != nil {
 		log.Panic(err)
 	}
@@ -89,35 +109,16 @@ func (m *Membership) getOldServers() set.Set {
 	return servers
 }
 
-func (m *Membership) initMembership() {
-	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
-	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
-
-	m.mu.Lock()
-	m.dirWatch = channel
-
-	for i := 0; i < len(nodes); i++ {
-		// Add to consistent hash ring
-		serverName := nodes[i]
-		serverAddr := nodesData[i]
-		serverNode := &ServerNode{Name: serverName, Addr: serverAddr}
-		m.ch.Add(serverNode)
-		m.aliveNodes.Store(serverName, serverNode)
-	}
-	m.mu.Unlock()
-
-	// Monitor membership
-	go m.MonitorMembershipDirectory()
-}
-
 func (m *Membership) MonitorMembershipDirectory() {
 	for {
 		evt := <-m.dirWatch
 
+		nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
+		m.dirWatch = channel
+
 		if evt.Type != zk.EventNodeChildrenChanged {
 			log.Println("chmembership: MonitorMembershipDirectory: ignoring operation", evt.Type.String())
 		} else {
-			nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
 			nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
 
 			oldServers := m.getOldServers()
@@ -130,8 +131,8 @@ func (m *Membership) MonitorMembershipDirectory() {
 			}
 
 			intersection := oldServers.Intersection(&newServers)
-			removedServers := intersection.Difference(&oldServers)
-			addedServers := intersection.Difference(&newServers)
+			removedServers := oldServers.Difference(intersection)
+			addedServers := newServers.Difference(intersection)
 
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -145,41 +146,6 @@ func (m *Membership) MonitorMembershipDirectory() {
 				m.aliveNodes.Store(server, serverNode)
 				m.ch.Add(serverNode)
 			})
-
-			m.dirWatch = channel
 		}
-	}
-}
-
-func (m *Membership) MonitorNode(name string, path string, nodeChannel <-chan zk.Event) {
-	evt := <-nodeChannel
-	switch evt.Type {
-	case zk.EventNodeDataChanged:
-		addr, watchCh := m.zkc.GetData(path, true)
-		oldServerNode, ok := m.aliveNodes.Load(name)
-		if !ok {
-			log.Println("chmembership: MonitorNode: did not find server node name=", name, "at", path)
-		} else {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			oldServerNode.(*ServerNode).Addr = addr
-
-			// TODO: Convert to loop
-			go m.MonitorNode(name, path, watchCh)
-		}
-		break
-	case zk.EventNodeDeleted:
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		_, loaded := m.aliveNodes.LoadAndDelete(name)
-		if loaded {
-			m.ch.Remove(name)
-		} else {
-			log.Println("chmembership: MonitorNode: did not find server node name=", name, "at", path)
-		}
-		break
-	default:
-		log.Println("chmembership: unsupported operation in MonitorNode:", evt.Type.String())
-		break
 	}
 }
