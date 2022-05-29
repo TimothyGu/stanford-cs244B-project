@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	address = flag.String("addr", "127.0.0.1:1059", "server node address")
+	address = flag.String("addr", "127.0.0.1:1054", "server internapi address")
 	set     = flag.String("set", "", "domain name to set")
 )
 

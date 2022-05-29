@@ -70,7 +70,7 @@ func Start(addr string, c *cache.Cache) {
 	}
 	grpcServer := grpc.NewServer()
 	pb.RegisterInternAPIServer(grpcServer, s)
-	log.Infof("internserve: started at %v", addr)
+	log.Infof("internserve: starting at %v", addr)
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Panicln(err)
 	}

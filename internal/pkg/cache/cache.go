@@ -42,6 +42,9 @@ func (c *Cache) Add(k Key, v []Value) bool {
 // Get looks up a key's value from the cache.
 func (c *Cache) Get(k Key) (value []Value, ok bool) {
 	vv, ok := (*lru.Cache)(c).Get(k)
+	if !ok {
+		return nil, ok
+	}
 	return vv.([]Value), ok
 }
 

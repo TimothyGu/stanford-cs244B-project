@@ -69,9 +69,9 @@ func SetupServers() map[string]ServerNode {
 	return m
 }
 
-func ListenAndServeUDP(localServerData *LocalServerData) {
+func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	s := &dns.Server{
-		Addr: ":1053",
+		Addr: addr,
 		Net:  "udp",
 	}
 
@@ -87,10 +87,11 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				var assignedServerNode ServerNode
-				assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
-				externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
-				go lookup.Lookup(&wg, query, output, externalServer)
+				// TODO: redo when zookeeper layer is working
+				// var assignedServerNode ServerNode
+				// assignedServerNode = localServerData.serverNodes[localServerData.c.LocateKey([]byte(query.Name)).String()]
+				// externalServer := assignedServerNode.ipAddr + ":" + assignedServerNode.portNum
+				go lookup.Lookup(&wg, query, output, "")
 			}
 			wg.Wait()
 			close(output)
@@ -136,15 +137,17 @@ func ListenAndServeUDP(localServerData *LocalServerData) {
 		}
 	})
 
+	log.Infof("externserve: starting at %s", s.Addr)
 	err := s.ListenAndServe()
 	if err != nil {
 		log.Fatalf("Error resolving UDP address: %v", err)
 	}
 }
 
-func Start() {
+func Start(addr string) {
 	lookup.InitDB()
 
+	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
 		serverNodes: SetupServers(),
 	}
@@ -154,5 +157,5 @@ func Start() {
 		localServerData.c.Add(n)
 	}
 
-	ListenAndServeUDP(&localServerData)
+	ListenAndServeUDP(addr, &localServerData)
 }

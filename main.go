@@ -9,13 +9,14 @@ import (
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
 )
 
-var basePort = flag.Int("port", 1058, "base port number (DNS = base, internapi = base+1)")
+var basePort = flag.Int("port", 1053, "base port number (DNS = base, internapi = base+1)")
 
 func main() {
 
-	internAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+1)
+	externAddr := fmt.Sprintf(":%d", *basePort)
+	internAddr := fmt.Sprintf(":%d", *basePort+1)
 
-	go externserve.Start()
+	go externserve.Start(externAddr)
 	go internserve.Start(internAddr, lookup.L2Cache)
 
 	select {} // block forever
