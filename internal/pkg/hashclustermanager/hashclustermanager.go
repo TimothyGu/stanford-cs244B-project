@@ -14,6 +14,9 @@ import (
 	"google.golang.org/grpc"
 )
 
+type JoinClusterCallback func(cluster int)
+type ExitClusterCallback func(cluster int)
+
 type HashClusterManager struct {
 	// Configs
 	totalClusters     int // Total # clusters
@@ -22,6 +25,9 @@ type HashClusterManager struct {
 
 	self     *types.ServerNode
 	zkClient *zkc.ZookeeperClient
+
+	joinClusterCallback JoinClusterCallback
+	exitClusterCallback ExitClusterCallback
 
 	// RW Lock protected region
 	mu sync.RWMutex
@@ -37,7 +43,7 @@ type HashClusterManager struct {
 	cluster2NodeMap map[int]*set.Set
 
 	// Node Name -> set of clusters ID (int) assigned.
-	// Updated by updateClusterAssignment and updateMembership.
+	// Updated by updateCurrentClusterAssignment and updateMembership.
 	curAssignments map[string]*set.Set
 
 	// Whether this node is the leader
@@ -59,27 +65,27 @@ func NewHashClusterManager(
 	preferredClusters int,
 	maxClusters int,
 	self *types.ServerNode,
-	zkClient *zkc.ZookeeperClient) *HashClusterManager {
+	zkClient *zkc.ZookeeperClient,
+	joinClusterCallback JoinClusterCallback,
+	exitClusterCallback ExitClusterCallback) *HashClusterManager {
 
 	hcm := &HashClusterManager{
-		totalClusters:     totalClusters,
-		preferredClusters: preferredClusters,
-		maxClusters:       maxClusters,
-		self:              self,
-		zkClient:          zkClient,
-		gRpcConns:         map[string]*grpc.ClientConn{},
-		cluster2NodeMap:   map[int]*set.Set{},
-		curAssignments:    map[string]*set.Set{},
-		isLeader:          false,
-		clusterSize:       map[int]int{},
-		notFilledClusters: set.Set{},
+		totalClusters:       totalClusters,
+		preferredClusters:   preferredClusters,
+		maxClusters:         maxClusters,
+		self:                self,
+		zkClient:            zkClient,
+		joinClusterCallback: joinClusterCallback,
+		exitClusterCallback: exitClusterCallback,
+		gRpcConns:           map[string]*grpc.ClientConn{},
+		cluster2NodeMap:     map[int]*set.Set{},
+		curAssignments:      map[string]*set.Set{},
+		isLeader:            false,
+		clusterSize:         map[int]int{},
+		notFilledClusters:   set.Set{},
 	}
 
 	return hcm
-}
-
-func getMembershipSequentialZnodePrefix(name string) string {
-	return name + "_"
 }
 
 func (hcm *HashClusterManager) Init() {
@@ -94,6 +100,12 @@ func (hcm *HashClusterManager) Init() {
 	go hcm.monitorClusterAssignment()
 }
 
+// Private functions
+
+func getMembershipSequentialZnodePrefix(name string) string {
+	return name + "_"
+}
+
 func getClusterId(cluster string) int {
 	id, err := strconv.Atoi(cluster)
 	if err != nil {
@@ -102,8 +114,8 @@ func getClusterId(cluster string) int {
 	return id
 }
 
-// updateClusterAssignment updates curAssignments
-func (hcm *HashClusterManager) updateClusterAssignment(clusters []string, node string) {
+// updateCurrentClusterAssignment updates curAssignments
+func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string, node string) {
 	var newAssignment set.Set
 	for _, cluster := range clusters {
 		newAssignment.Insert(cluster)
@@ -121,11 +133,19 @@ func (hcm *HashClusterManager) updateClusterAssignment(clusters []string, node s
 	newAssignments := newAssignment.Difference(intersection)
 
 	removedAssignments.Do(func(cluster interface{}) {
-		curAssignments.Remove(getClusterId(cluster.(string)))
+		clusterId := getClusterId(cluster.(string))
+		curAssignments.Remove(clusterId)
+
+		// Exit Cluster Callback
+		go hcm.exitClusterCallback(clusterId)
 	})
 
 	newAssignments.Do(func(cluster interface{}) {
-		curAssignments.Insert(getClusterId(cluster.(string)))
+		clusterId := getClusterId(cluster.(string))
+		curAssignments.Insert(clusterId)
+
+		// Join Cluster Callback
+		go hcm.joinClusterCallback(clusterId)
 	})
 
 	// Update assignments on ZK
@@ -151,7 +171,7 @@ func (hcm *HashClusterManager) monitorClusterAssignment() {
 		// We only care if the children are changed (assignment changed).
 		// We ignore other types of updates and do not expect them to happen.
 		if evt.Type == zk.EventNodeChildrenChanged {
-			hcm.updateClusterAssignment(clusters, hcm.self.Name)
+			hcm.updateCurrentClusterAssignment(clusters, hcm.self.Name)
 		}
 
 		evt = <-watch
@@ -186,17 +206,18 @@ func (hcm *HashClusterManager) leaderElection(seqNum2Node *sortedmap.SortedMap) 
 		return true
 	})
 
-	if smallest {
+	if !smallest {
+		// Watch m_j where j is the larges number that is smaller than i
+		hcm.isLeader = false
+		hcm.zkClient.Exists(zkc.GetAbsolutePath(NODE_MEMBERSHIP, nodeBeforeCurrentNode), true)
+	} else {
 		// I'm the leader now
 		// Start leader procedure
+		// TODO: leader election procedure
 		hcm.mu.Lock()
 		defer hcm.mu.Unlock()
 
 		hcm.isLeader = true
-	} else {
-		// Watch m_j where j is the larges number that is smaller than i
-		hcm.isLeader = false
-		hcm.zkClient.Exists(zkc.GetAbsolutePath(NODE_MEMBERSHIP, nodeBeforeCurrentNode), true)
 	}
 }
 
@@ -249,7 +270,7 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 			clusters, _ := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), false)
 
 			// This function holds a lock
-			hcm.updateClusterAssignment(clusters, node)
+			hcm.updateCurrentClusterAssignment(clusters, node)
 
 			nodeAddr := nodeAddrs[i]
 
@@ -286,4 +307,8 @@ func (hcm *HashClusterManager) monitorMembership() {
 
 		evt = <-watch
 	}
+}
+
+func (hcm *HashClusterManager) allocateClusters(cluster int) {
+	// TODO
 }
