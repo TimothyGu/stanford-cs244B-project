@@ -32,7 +32,8 @@ var supportedQueries = map[uint16]bool{
 	dns.TypeCNAME: true,
 }
 
-var L2Cache = cache.New()
+var L1Cache = cache.NewL1Cache()
+var L2Cache = cache.NewL2Cache()
 
 const defaultExternalServer = "1.1.1.1:53"
 
@@ -232,9 +233,8 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	// Look up local L2 cache if the key is within range.
 	var records []cache.Value
 	var ok bool
-	// TODO: L1 cache
-	// records, ok := L1Cache.Get(key)
-	if inSelfRange {
+	records, ok = L1Cache.Get(key)
+	if !ok && inSelfRange {
 		records, ok = L2Cache.Get(key)
 	}
 	if ok {
@@ -278,7 +278,9 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	}
 
 	if !inSelfRange && options.Has(LookupSaveToL1) {
-		// TODO: save to L1
+		if len(cacheValues) > 0 {
+			L1Cache.Add(key, cacheValues)
+		}
 	}
 
 	if options.Has(LookupGossipToOtherL2) {
