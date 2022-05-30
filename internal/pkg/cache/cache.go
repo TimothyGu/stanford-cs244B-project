@@ -2,6 +2,8 @@ package cache
 
 import (
 	"errors"
+	"flag"
+	"sync"
 	"time"
 
 	"github.com/bluele/gcache"
@@ -9,6 +11,8 @@ import (
 	"github.com/miekg/dns"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
+
+var removeExpiredEntries = flag.Bool("l1rmexpired", true, "periodically remove expired kv pairs in L1 cache")
 
 type Key struct {
 	DomainName string
@@ -39,10 +43,15 @@ type Value struct {
 }
 
 const L1CacheSize = 1000
+const L1CacheMaxKeyNum = 10000
 const L1CacheExpiration = time.Hour * 2
 const L2CacheSize = 10000
 
 type L1Cache gcache.LFUCache
+
+var L1NewKeyNum = 0
+var L1Mu sync.RWMutex
+
 type L2Cache lru.Cache
 
 func NewL1Cache() *L1Cache {
@@ -58,6 +67,23 @@ func (c *L1Cache) Purge() {
 // Add adds a value to the cache.
 func (c *L1Cache) Add(k Key, v []Value) {
 	_ = (*gcache.LFUCache)(c).SetWithExpire(k, v, L1CacheExpiration)
+	if *removeExpiredEntries {
+		L1Mu.Lock()
+		L1NewKeyNum++
+		if L1NewKeyNum > L1CacheMaxKeyNum {
+			c.RemoveExpiredEntries()
+			L1NewKeyNum = 0
+		}
+		L1Mu.Unlock()
+	}
+}
+
+func (c *L1Cache) RemoveExpiredEntries() {
+	for _, k := range c.Keys() {
+		if !c.Contains(k) {
+			c.Remove(k)
+		}
+	}
 }
 
 // Get looks up a key's value from the cache.
