@@ -278,7 +278,9 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	}
 
 	if !inSelfRange && options.Has(LookupSaveToL1) {
-		L1Cache.Add(key, cacheValues)
+		if len(cacheValues) > 0 {
+			L1Cache.Add(key, cacheValues)
+		}
 	}
 
 	if options.Has(LookupGossipToOtherL2) {
