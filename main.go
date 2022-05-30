@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -24,6 +25,14 @@ func main() {
 
 	externAddr := fmt.Sprintf(":%d", *basePort)
 	internAddr := fmt.Sprintf(":%d", *basePort+1)
+
+	if *serverName == "" {
+		log.Fatalln("Error: server name not provided.")
+	}
+
+	if *serverAddr == "" {
+		log.Fatalln("Error: server addr not provided.")
+	}
 
 	consistentHashing := externserve.CreateConsistentHashing()
 	membership := chmembership.NewMembership(
