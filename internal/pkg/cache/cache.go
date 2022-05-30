@@ -90,9 +90,9 @@ func (c *L1Cache) RemoveExpiredEntries() {
 func (c *L1Cache) Get(k Key) (value []Value, ok bool) {
 	vv, err := (*gcache.LFUCache)(c).Get(k)
 	if err != nil {
-		return nil, ok
+		return nil, false
 	}
-	return vv.([]Value), ok
+	return vv.([]Value), true
 }
 
 // Contains checks if a key is in the cache, without updating the

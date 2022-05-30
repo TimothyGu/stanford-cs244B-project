@@ -234,7 +234,7 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	var records []cache.Value
 	var ok bool
 	records, ok = L1Cache.Get(key)
-	if inSelfRange {
+	if !ok && inSelfRange {
 		records, ok = L2Cache.Get(key)
 	}
 	if ok {
