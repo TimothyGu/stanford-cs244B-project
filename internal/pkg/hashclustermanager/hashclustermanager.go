@@ -137,7 +137,7 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 		curAssignments.Remove(clusterId)
 
 		// Exit Cluster Callback
-		go hcm.exitClusterCallback(clusterId)
+		go hcm.exitCluster(clusterId, cluster.(string))
 	})
 
 	newAssignments.Do(func(cluster interface{}) {
@@ -145,21 +145,8 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 		curAssignments.Insert(clusterId)
 
 		// Join Cluster Callback
-		go hcm.joinClusterCallback(clusterId)
+		go hcm.joinCluster(clusterId, cluster.(string))
 	})
-
-	// Update assignments on ZK
-	go func() {
-		removedAssignments.Do(func(cluster interface{}) {
-			hcm.zkClient.Delete(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster.(string)))
-		})
-
-		newAssignments.Do(func(cluster interface{}) {
-			if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster.(string)), "", zk.FlagEphemeral); !ok {
-				log.Panicln("hashclustermanager: create ephemeral znode failed for cluster", cluster)
-			}
-		})
-	}()
 }
 
 func (hcm *HashClusterManager) monitorClusterAssignment() {
@@ -309,6 +296,22 @@ func (hcm *HashClusterManager) monitorMembership() {
 	}
 }
 
-func (hcm *HashClusterManager) allocateClusters(cluster int) {
+func (hcm *HashClusterManager) allocateClusters(clusterId int) {
 	// TODO
+}
+
+func (hcm *HashClusterManager) joinCluster(clusterId int, cluster string) {
+	hcm.joinClusterCallback(clusterId)
+	if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster), "", 0); !ok {
+		log.Panicln("hashclustermanager: create znode failed for cluster", cluster)
+	}
+
+	if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, hcm.self.Name)), "", zk.FlagEphemeral); !ok {
+		log.Panicf("hashclustermanager: create ephemeral znode %v failed for cluster %v \n", hcm.self.Name, cluster)
+	}
+}
+
+func (hcm *HashClusterManager) exitCluster(clusterId int, cluster string) {
+	hcm.exitClusterCallback(clusterId)
+	hcm.zkClient.Delete(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster))
 }
