@@ -1,10 +1,11 @@
 package externserve
 
 import (
+	"context"
 	"sync"
 
 	"github.com/buraksezer/consistent"
-	"github.com/cespare/xxhash"
+	"github.com/dchest/siphash"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
@@ -20,10 +21,15 @@ type LocalServerData struct {
 // DNSRequestHash is the hash function used to distribute keys/members uniformly.
 type DNSRequestHash struct{}
 
+// Keys to SipHash, generated at random.
+// Ideally this should be decided at runtime and stored in Zookeeper.
+const (
+	siphash_k0 uint64 = 16038536194969526240
+	siphash_k1 uint64 = 11178038365157218530
+)
+
 func (h DNSRequestHash) Sum64(data []byte) uint64 {
-	// Used the default one provided by the consistent package.
-	// TODO: Test if this hash function can provide uniformity.
-	return xxhash.Sum64(data)
+	return siphash.Hash(siphash_k0, siphash_k1, data)
 }
 
 // CreateConsistentHashing creates a new consistent instance.
@@ -55,9 +61,19 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 			var wg sync.WaitGroup
 			for _, query := range queryMsg.Question {
 				wg.Add(1)
-				// TODO: Use Cache::Key object instead of query.Name
-				assignedServerNode := localServerData.membership.LocateServer([]byte(query.Name))
-				go lookup.Lookup(&wg, query, output, assignedServerNode.Addr)
+				query := query
+				go func() {
+					defer wg.Done()
+					recs := lookup.Lookup(
+						context.Background(),
+						localServerData.membership,
+						query,
+						lookup.ExternalProfile,
+					)
+					for _, rec := range recs {
+						output <- rec
+					}
+				}()
 			}
 			wg.Wait()
 			close(output)
@@ -111,8 +127,6 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 }
 
 func Start(addr string, membership *chmembership.Membership) {
-	lookup.InitDB()
-
 	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
 		membership: membership,

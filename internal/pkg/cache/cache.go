@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -12,6 +13,23 @@ import (
 type Key struct {
 	DomainName string
 	Type       uint16
+}
+
+func (k Key) MarshalBinary() (data []byte, err error) {
+	buf := make([]byte, 2+len(k.DomainName))
+	buf[0] = byte(k.Type >> 8)
+	buf[1] = byte(k.Type)
+	copy(buf[2:], k.DomainName)
+	return buf, nil
+}
+
+func (k *Key) UnmarshalBinary(data []byte) error {
+	if len(data) < 2 {
+		return errors.New("cache: too short to be a Key")
+	}
+	k.Type = uint16(data[0])<<8 | uint16(data[1])
+	k.DomainName = string(data[2:])
+	return nil
 }
 
 type Value struct {

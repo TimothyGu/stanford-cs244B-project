@@ -39,34 +39,37 @@ type Membership struct {
 	mu         sync.RWMutex
 	aliveNodes sync.Map      // ServerName -> *ServerNode
 	ch         *c.Consistent // ServerNode
+	self       ServerNode
 }
 
-func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode ServerNode, servers []string) *Membership {
+func NewMembership(consistent *c.Consistent, timeout time.Duration, self ServerNode, servers []string) *Membership {
 	z := zkc.NewZookeeperClient(timeout, servers)
 
 	m := &Membership{
-		ch:  consistent,
-		zkc: z,
+		ch:   consistent,
+		zkc:  z,
+		self: self,
 	}
+	return m
+}
 
-	// Create the chmembership directory if it doesn't exist
-	if exists, _ := z.Exists(CH_MEMBERSHIP_PATH, false); !exists {
-		if _, ok := z.Create(CH_MEMBERSHIP_PATH, "", 0); !ok {
+func (m *Membership) Init() {
+	// Create the chmembership directory if it doesn't exist.
+	if exists, _ := m.zkc.Exists(CH_MEMBERSHIP_PATH, false); !exists {
+		if _, ok := m.zkc.Create(CH_MEMBERSHIP_PATH, "", 0); !ok {
 			log.Panicf("Directory %v not created!\n", CH_MEMBERSHIP_PATH)
 		}
 
 		log.Printf("Directory %v created.\n", CH_MEMBERSHIP_PATH)
 	}
 
-	absolutePath := getAbsolutePath(serverNode.Name)
+	// Create ephemeral znode for this server.
+	absolutePath := getAbsolutePath(m.self.Name)
 
-	if _, ok := z.Create(absolutePath, serverNode.Addr, zk.FlagEphemeral); !ok {
+	if _, ok := m.zkc.Create(absolutePath, m.self.Addr, zk.FlagEphemeral); !ok {
 		log.Panicf("Server membership znode <%v> not created.\n", absolutePath)
 	}
-	return m
-}
 
-func (m *Membership) Init() {
 	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
 	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
 
@@ -85,6 +88,10 @@ func (m *Membership) Init() {
 
 	// Monitor membership
 	go m.MonitorMembershipDirectory()
+}
+
+func (m *Membership) Self() ServerNode {
+	return m.self
 }
 
 // key -> ServerNode

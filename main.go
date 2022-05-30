@@ -47,7 +47,7 @@ func main() {
 
 	// Spin up external serve and internal serve routings
 	go externserve.Start(externAddr, membership)
-	go internserve.Start(internAddr, lookup.L2Cache)
+	go internserve.Start(internAddr, membership, lookup.L2Cache)
 
 	select {} // block forever
 }

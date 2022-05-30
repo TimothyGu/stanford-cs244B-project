@@ -7,14 +7,19 @@ import (
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/cache"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/chmembership"
 	pb "go.timothygu.me/stanford-cs244b-project/internal/pkg/internapi"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
 )
 
 type InternAPIServer struct {
 	pb.UnimplementedInternAPIServer
+	m *chmembership.Membership
 	c *cache.Cache
 }
 
@@ -59,15 +64,37 @@ func (s *InternAPIServer) InternalListKeys(ctx context.Context, _ *emptypb.Empty
 	return res, nil
 }
 
-func Start(addr string, c *cache.Cache) {
+func (s *InternAPIServer) Query(ctx context.Context, req *pb.QueryRequest) (*pb.QueryResponse, error) {
+	q := req.GetQuestion()
+	query := dns.Question{
+		Name:   q.GetName(),
+		Qtype:  uint16(q.GetQtype()),
+		Qclass: dns.ClassINET,
+	}
+	output := lookup.Lookup(ctx, s.m, query, lookup.InternalProfile)
+	res := new(pb.QueryResponse)
+	for _, out := range output {
+		rrBuf := make([]byte, dns.Len(out.Record))
+		_, err := dns.PackRR(out.Record, rrBuf, 0, nil, false)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to pack RR: %w", err)
+		}
+		res.Response = append(res.Response, &pb.DNSResponse{
+			Rr:     rrBuf,
+			Expiry: nil,
+			Type:   pb.FromResourceRecordType(out.Type),
+		})
+	}
+	return res, nil
+}
+
+func Start(addr string, m *chmembership.Membership, c *cache.Cache) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Panicln(err)
 	}
 
-	s := &InternAPIServer{
-		c: c,
-	}
+	s := &InternAPIServer{m: m, c: c}
 	grpcServer := grpc.NewServer()
 	pb.RegisterInternAPIServer(grpcServer, s)
 	log.Infof("internserve: starting at %v", addr)
