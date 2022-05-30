@@ -28,7 +28,7 @@ func NewZookeeperClient(timeout time.Duration, servers []string) *ZookeeperClien
 func (z *ZookeeperClient) Create(path string, data string, flags int32) (string, bool) {
 	ok := true
 
-	path, err := z.zkConn.Create(path, []byte(data), flags, zk.WorldACL(zk.PermAll)) // No ACL needed
+	path, err := z.zkConn.Create(path, []byte(data), flags, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		log.Errorln(err)
 		ok = false

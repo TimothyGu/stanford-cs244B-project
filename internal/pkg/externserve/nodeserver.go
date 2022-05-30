@@ -127,7 +127,6 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 }
 
 func Start(addr string, membership *chmembership.Membership) {
-	// TODO: integrate this with Zookeeper layer
 	localServerData := LocalServerData{
 		membership: membership,
 	}
