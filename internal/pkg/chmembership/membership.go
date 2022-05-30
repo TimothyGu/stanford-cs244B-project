@@ -48,7 +48,21 @@ func NewMembership(consistent *c.Consistent, timeout time.Duration, serverNode S
 		ch:  consistent,
 		zkc: z,
 	}
-	z.Create(serverNode.Name, getAbsolutePath(serverNode.Addr), zk.FlagEphemeral)
+
+	// Create the chmembership directory if it doesn't exist
+	if exists, _ := z.Exists(CH_MEMBERSHIP_PATH, false); !exists {
+		if _, ok := z.Create(CH_MEMBERSHIP_PATH, "", 0); !ok {
+			log.Panicf("Directory %v not created!\n", CH_MEMBERSHIP_PATH)
+		}
+
+		log.Printf("Directory %v created.\n", CH_MEMBERSHIP_PATH)
+	}
+
+	absolutePath := getAbsolutePath(serverNode.Name)
+
+	if _, ok := z.Create(absolutePath, serverNode.Addr, zk.FlagEphemeral); !ok {
+		log.Panicf("Server membership znode <%v> not created.\n", absolutePath)
+	}
 	return m
 }
 
