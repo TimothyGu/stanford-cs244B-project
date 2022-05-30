@@ -73,6 +73,13 @@ func (z *ZookeeperClient) GetData(path string, watch bool) (string, <-chan zk.Ev
 	return string(data), channel
 }
 
+// Delete removes the znode given the path. Here we remove the znode regardless of the version.
+func (z *ZookeeperClient) Delete(path string) {
+	if err := z.zkConn.Delete(path, -1); err != nil {
+		log.Errorln(err)
+	}
+}
+
 // GetChildren returns the children and watch events channel. channel is nil if watch == false
 func (z *ZookeeperClient) GetChildren(path string, watch bool) (children []string, channel <-chan zk.Event) {
 	var err error
@@ -98,4 +105,11 @@ func (z *ZookeeperClient) GetDataFromChildren(path string, children []string, wa
 	}
 
 	return childrenData, childrenWatch
+}
+
+func (z *ZookeeperClient) GetChildrenAndData(path string, watchDir bool, watchEachChild bool) ([]string, <-chan zk.Event, []string, []<-chan zk.Event) {
+	children, channel := z.GetChildren(path, watchDir)
+	childrenData, childrenWatch := z.GetDataFromChildren(path, children, watchEachChild)
+
+	return children, channel, childrenData, childrenWatch
 }

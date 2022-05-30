@@ -61,8 +61,7 @@ func (m *Membership) Init() {
 		log.Panicf("Server membership znode <%v> not created.\n", absolutePath)
 	}
 
-	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
-	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)
+	nodes, channel, nodesData, _ := m.zkc.GetChildrenAndData(CH_MEMBERSHIP_PATH, true, false)
 
 	m.mu.Lock()
 	m.dirWatch = channel
