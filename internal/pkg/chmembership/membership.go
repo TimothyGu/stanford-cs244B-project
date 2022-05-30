@@ -54,7 +54,21 @@ func NewMembership(consistent *c.Consistent, timeout time.Duration, self ServerN
 }
 
 func (m *Membership) Init() {
-	m.zkc.Create(m.self.Name, getAbsolutePath(m.self.Addr), zk.FlagEphemeral)
+	// Create the chmembership directory if it doesn't exist.
+	if exists, _ := m.zkc.Exists(CH_MEMBERSHIP_PATH, false); !exists {
+		if _, ok := m.zkc.Create(CH_MEMBERSHIP_PATH, "", 0); !ok {
+			log.Panicf("Directory %v not created!\n", CH_MEMBERSHIP_PATH)
+		}
+
+		log.Printf("Directory %v created.\n", CH_MEMBERSHIP_PATH)
+	}
+
+	// Create ephemeral znode for this server.
+	absolutePath := getAbsolutePath(m.self.Name)
+
+	if _, ok := m.zkc.Create(absolutePath, m.self.Addr, zk.FlagEphemeral); !ok {
+		log.Panicf("Server membership znode <%v> not created.\n", absolutePath)
+	}
 
 	nodes, channel := m.zkc.GetChildren(CH_MEMBERSHIP_PATH, true)
 	nodesData, _ := m.zkc.GetDataFromChildren(CH_MEMBERSHIP_PATH, nodes, false)

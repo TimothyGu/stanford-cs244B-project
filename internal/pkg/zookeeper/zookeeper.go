@@ -27,14 +27,31 @@ func NewZookeeperClient(timeout time.Duration, servers []string) *ZookeeperClien
 // returns the children and watch events channel. channel is nil if watch == false
 func (z *ZookeeperClient) Create(path string, data string, flags int32) (string, bool) {
 	ok := true
-	path, err := z.zkConn.Create(path, []byte(data), flags, nil) // No ACL needed
 
+	path, err := z.zkConn.Create(path, []byte(data), flags, zk.WorldACL(zk.PermAll)) // No ACL needed
 	if err != nil {
 		log.Errorln(err)
 		ok = false
 	}
 
 	return path, ok
+}
+
+// Exists returns the children and watch events channel. channel is nil if watch == false
+func (z *ZookeeperClient) Exists(path string, watch bool) (exists bool, evtChannel <-chan zk.Event) {
+	var err error
+
+	if watch {
+		exists, _, evtChannel, err = z.zkConn.ExistsW(path)
+	} else {
+		exists, _, err = z.zkConn.Exists(path)
+	}
+
+	if err != nil {
+		panic(err)
+	}
+
+	return exists, evtChannel
 }
 
 // GetData returns the children and watch events channel. channel is nil if watch == false
