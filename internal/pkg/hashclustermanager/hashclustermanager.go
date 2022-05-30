@@ -90,6 +90,15 @@ func NewHashClusterManager(
 }
 
 func (hcm *HashClusterManager) Init() {
+	// Create membership directory if it doesn't exist
+	if exist, _ := hcm.zkClient.Exists(NODE_MEMBERSHIP, false); !exist {
+		log.Printf("hashclustermanager: %v does not exist yet. Creating...\n", NODE_MEMBERSHIP)
+
+		if _, ok := hcm.zkClient.Create(NODE_MEMBERSHIP, "", 0); !ok {
+			log.Panicf("hashclustermanager: unable to create membership directory %v.\n", NODE_MEMBERSHIP)
+		}
+	}
+
 	// Register membership
 	if _, ok := hcm.zkClient.Create(
 		zkc.GetAbsolutePath(NODE_MEMBERSHIP, getMembershipSequentialZnodePrefix(hcm.self.Name)),
@@ -229,15 +238,14 @@ func (hcm *HashClusterManager) leaderElection(seqNum2Node *sortedmap.SortedMap) 
 
 	if !smallest {
 		// Watch m_j where j is the larges number that is smaller than i
-		hcm.isLeader = false
 		hcm.zkClient.Exists(zkc.GetAbsolutePath(NODE_MEMBERSHIP, nodeBeforeCurrentNode), true)
 	} else {
 		// I'm the leader now
 		// Start leader procedure
 		// TODO: leader election procedure
+
 		hcm.mu.Lock()
 		defer hcm.mu.Unlock()
-
 		hcm.isLeader = true
 	}
 }
@@ -270,13 +278,14 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 	newNodes := newNodeSet.Difference(intersection)
 
 	// Update local memberships
-	hcm.mu.Lock()
 
 	// We don't need to manually delete the dead znode under CLUSTER2NODE_PATH because
 	// 1. they're also ephemeral and
 	// 2. we received a notification about an ephemeral znode getting deleted,
 	// which means the server / node died.
 	removedNodes.Do(func(node any) {
+		hcm.mu.Lock()
+		defer hcm.mu.Unlock()
 		clusters := hcm.curAssignments[node.(string)]
 		clusters.Do(func(cluster any) {
 			nodes := hcm.cluster2NodeMap[getClusterId(cluster.(string))]
@@ -284,7 +293,6 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 		})
 		delete(hcm.curAssignments, node.(string))
 	})
-	hcm.mu.Unlock()
 
 	for i, node := range sequentialNodes {
 		if newNodes.Has(node) {
