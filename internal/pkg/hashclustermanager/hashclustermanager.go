@@ -1,6 +1,7 @@
 package hashclustermanager
 
 import (
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,8 +40,8 @@ type HashClusterManager struct {
 	// Node Name -> Grpc Client Connection. Updated by updateMembership.
 	gRpcConns map[string]*grpc.ClientConn
 
-	// Cluster ID -> set of Node Names. Updated by updateMembership.
-	cluster2NodeMap map[int]*set.Set
+	// Cluster ID -> list of Node Names. Updated by updateMembership.
+	cluster2NodeMap map[int][]string
 
 	// Node Name -> set of clusters ID (int) assigned.
 	// Updated by updateCurrentClusterAssignment and updateMembership.
@@ -78,7 +79,7 @@ func NewHashClusterManager(
 		joinClusterCallback: joinClusterCallback,
 		exitClusterCallback: exitClusterCallback,
 		gRpcConns:           map[string]*grpc.ClientConn{},
-		cluster2NodeMap:     map[int]*set.Set{},
+		cluster2NodeMap:     map[int][]string{},
 		curAssignments:      map[string]*set.Set{},
 		isLeader:            false,
 		clusterSize:         map[int]int{},
@@ -100,7 +101,40 @@ func (hcm *HashClusterManager) Init() {
 	go hcm.monitorClusterAssignment()
 }
 
+// GetGrpcConnForPartition returns a server randomly chosen from the server pool. ok indictes whether the connection is found.
+// Partition ID is the same as the cluster ID.
+func (hcm *HashClusterManager) GetGrpcConnForPartition(partitionId int) (conn *grpc.ClientConn, ok bool) {
+	hcm.mu.RLock()
+	defer hcm.mu.RUnlock()
+	nodes, ok := hcm.cluster2NodeMap[partitionId]
+	if !ok {
+		return nil, false
+	}
+	node := nodes[rand.Intn(len(nodes))]
+	return hcm.gRpcConns[node], true
+}
+
 // Private functions
+
+func remove(s []string, i int) []string {
+	s[i] = s[len(s)-1]
+	return s[:len(s)-1]
+}
+
+func removeItem(slice []string, item string) []string {
+	itemIdx := -1
+	for idx, s := range slice {
+		if s == item {
+			itemIdx = idx
+		}
+	}
+
+	if itemIdx == -1 {
+		return slice
+	}
+
+	return remove(slice, itemIdx)
+}
 
 func getMembershipSequentialZnodePrefix(name string) string {
 	return name + "_"
@@ -132,7 +166,7 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 	removedAssignments := curAssignments.Difference(intersection)
 	newAssignments := newAssignment.Difference(intersection)
 
-	removedAssignments.Do(func(cluster interface{}) {
+	removedAssignments.Do(func(cluster any) {
 		clusterId := getClusterId(cluster.(string))
 		curAssignments.Remove(clusterId)
 
@@ -140,7 +174,7 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 		go hcm.exitCluster(clusterId, cluster.(string))
 	})
 
-	newAssignments.Do(func(cluster interface{}) {
+	newAssignments.Do(func(cluster any) {
 		clusterId := getClusterId(cluster.(string))
 		curAssignments.Insert(clusterId)
 
@@ -242,11 +276,11 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 	// 1. they're also ephemeral and
 	// 2. we received a notification about an ephemeral znode getting deleted,
 	// which means the server / node died.
-	removedNodes.Do(func(node interface{}) {
+	removedNodes.Do(func(node any) {
 		clusters := hcm.curAssignments[node.(string)]
-		clusters.Do(func(cluster interface{}) {
+		clusters.Do(func(cluster any) {
 			nodes := hcm.cluster2NodeMap[getClusterId(cluster.(string))]
-			nodes.Remove(node)
+			hcm.cluster2NodeMap[getClusterId(cluster.(string))] = removeItem(nodes, node.(string))
 		})
 		delete(hcm.curAssignments, node.(string))
 	})
@@ -263,8 +297,9 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 
 			hcm.mu.Lock()
 			curAssignments := hcm.curAssignments[node]
-			curAssignments.Do(func(cluster interface{}) {
-				hcm.cluster2NodeMap[getClusterId(cluster.(string))].Insert(node)
+			curAssignments.Do(func(cluster any) {
+				nodes := hcm.cluster2NodeMap[getClusterId(cluster.(string))]
+				hcm.cluster2NodeMap[getClusterId(cluster.(string))] = append(nodes, node)
 			})
 
 			// Create a new gRpc connection to the new node.
