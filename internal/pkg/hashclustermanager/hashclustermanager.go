@@ -324,11 +324,22 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 			clusters, _ := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), false)
 
 			// This function holds a lock
-			hcm.updateCurrentClusterAssignment(clusters, node)
 
 			nodeAddr := nodeAddrs[i]
 
 			hcm.mu.Lock()
+			curAssignments, exists := hcm.curAssignments[node]
+			if !exists {
+				curAssignments = set.New()
+				hcm.curAssignments[node] = curAssignments
+			}
+
+			for _, cluster := range clusters {
+				clusterId := getClusterId(cluster)
+				hcm.cluster2NodeMap[clusterId] = append(hcm.cluster2NodeMap[clusterId], node)
+				curAssignments.Insert(clusterId)
+			}
+
 			// Create a new gRpc connection to the new node.
 			hcm.gRpcConns[node] = getGrpcConn(nodeAddr)
 			hcm.mu.Unlock()
