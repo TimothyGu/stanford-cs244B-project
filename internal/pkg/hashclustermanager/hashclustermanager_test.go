@@ -105,39 +105,23 @@ func Test_hcm_assignment(t *testing.T) {
 	// Test remove assignment
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
 
+	clusterId = 2
+	cluster = "2"
+	test_add_cluster(hcm, t, clusterId, cluster, &joinCounter, &exitCounter)
+
 	clusterId = 0
 	cluster = "0"
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
 
+	// Should be no op
+	exitCounter.Store(clusterId, 1)
+	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+
+	clusterId = 2
+	cluster = "2"
+	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+
 }
-
-// func Test_kvstore_snapshot(t *testing.T) {
-// 	tm := sync.Map{}
-// 	tm.Store("foo", "bar")
-// 	s := &KVStore{kvStore: &tm}
-
-// 	v, _ := s.Lookup("foo")
-// 	if v != "bar" {
-// 		t.Fatalf("foo has unexpected value, got %s", v)
-// 	}
-
-// 	data, err := s.GetSnapshot()
-// 	if err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	s.kvStore = nil
-
-// 	if err := s.recoverFromSnapshot(data); err != nil {
-// 		t.Fatal(err)
-// 	}
-// 	v, _ = s.Lookup("foo")
-// 	if v != "bar" {
-// 		t.Fatalf("foo has unexpected value, got %s", v)
-// 	}
-// 	if !reflect.DeepEqual(s.kvStore, tm) {
-// 		t.Fatalf("store expected %+v, got %+v", tm, s.kvStore)
-// 	}
-// }
 
 func test_add_cluster(
 	hcm *HashClusterManager,
@@ -152,7 +136,7 @@ func test_add_cluster(
 	hcm.createDirectoryIfNotExist(zkc.GetAbsolutePath(node2ClusterPath, cluster), "node2ClusterPath")
 
 	// Give it time to finish the job
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 200)
 	if exist, _ := hcm.zkClient.Exists(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, NODE_NAME)), false); !exist {
 		t.Fatalf("Cluster %v not created!", cluster)
 	}
@@ -179,6 +163,9 @@ func test_add_cluster(
 		log.Println("content of cluster2NodeMap", hcm.cluster2NodeMap)
 		t.Fatalf("cluster2NodeMap not updated correctly! len(nodes)=%d", len(nodes))
 	}
+
+	joinCounter.Store(clusterId, 0)
+	exitCounter.Store(clusterId, 0)
 }
 
 func test_remove_cluster(
@@ -192,7 +179,7 @@ func test_remove_cluster(
 	hcm.zkClient.Delete(zkc.GetAbsolutePath(node2ClusterPath, cluster))
 
 	// Give it time to finish the job
-	time.Sleep(time.Second)
+	time.Sleep(time.Millisecond * 200)
 
 	if count, ok := exitCounter.Load(clusterId); !ok || count != 1 {
 		t.Fatalf("exit counter not updated correctly for cluster %d!", clusterId)
@@ -212,4 +199,6 @@ func test_remove_cluster(
 	if len(nodes) != 0 {
 		t.Fatalf("cluster2NodeMap not updated correctly! len(nodes)=%d", len(nodes))
 	}
+
+	exitCounter.Store(clusterId, 0)
 }
