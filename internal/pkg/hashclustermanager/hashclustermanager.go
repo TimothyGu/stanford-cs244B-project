@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-zookeeper/zk"
 	"github.com/golang-collections/collections/set"
@@ -117,7 +118,7 @@ func (hcm *HashClusterManager) Init() {
 	}
 
 	go hcm.monitorMembership() // Leader election is handled in monitorMembership
-	go hcm.monitorClusterAssignment()
+	go hcm.monitorClusterAssignment(hcm.self.Name)
 }
 
 // GetGrpcConnForPartition returns a server randomly chosen from the server pool. ok indictes whether the connection is found.
@@ -194,8 +195,8 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 		curAssignments.Remove(clusterId)
 		hcm.cluster2NodeMap[clusterId.(int)] = removeItem(hcm.cluster2NodeMap[clusterId.(int)], node)
 
-		// Exit Cluster Callback
 		if isUpdatingSelf {
+			// Exit Cluster Callback
 			go hcm.exitCluster(clusterId.(int), strconv.Itoa(clusterId.(int)))
 		}
 	})
@@ -204,27 +205,36 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 		curAssignments.Insert(clusterId)
 		hcm.cluster2NodeMap[clusterId.(int)] = append(hcm.cluster2NodeMap[clusterId.(int)], node)
 
-		// Join Cluster Callback
 		if isUpdatingSelf {
+			// Join Cluster Callback
 			go hcm.joinCluster(clusterId.(int), strconv.Itoa(clusterId.(int)))
 		}
 	})
 }
 
-func (hcm *HashClusterManager) monitorClusterAssignment() {
+func (hcm *HashClusterManager) monitorClusterAssignment(node string) {
 	evt := zk.Event{Type: zk.EventNodeChildrenChanged}
-	i := 1
 
 	for {
-		clusters, watch := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, hcm.self.Name), true)
+		// hcm.mu.RLock()
+		// if _, exists := hcm.curAssignments[node]; !exists {
+		// 	hcm.mu.RUnlock()
+		// 	break
+		// }
+		// hcm.mu.RUnlock()
+
+		clusters, _ := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), true)
 
 		// We only care if the children are changed (assignment changed).
 		// We ignore other types of updates and do not expect them to happen.
 		if evt.Type == zk.EventNodeChildrenChanged {
-			hcm.updateCurrentClusterAssignment(clusters, hcm.self.Name)
+			hcm.updateCurrentClusterAssignment(clusters, node)
 		}
 
-		evt = <-watch
+		// Unfortunately, it seems the ZK library will deadlock or starve when using the watch.
+		// This renders our design impossible to implement.
+		time.Sleep(time.Millisecond * 500)
+		// evt = <-watch
 	}
 }
 
@@ -241,7 +251,7 @@ func (hcm *HashClusterManager) leaderElection(seqNum2Node *sortedmap.SortedMap) 
 	smallest := true
 
 	seqNum2Node.IterFunc(false, func(rec sortedmap.Record) bool {
-		_, node := rec.Key.(int), rec.Val.(string)
+		node, _ := rec.Key.(string), rec.Val.(int)
 		if smallest {
 			if node == hcm.self.Name {
 				return false // break
@@ -286,14 +296,17 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 	for _, sequentialNode := range sequentialNodes {
 		data := strings.Split(sequentialNode, SEQUNTIAL_NODE_SEP)
 		if len(data) != 2 {
-			log.Panicf("hashclustermanager: %v is not in the right format! Should be <node name>_<seq #>.\n", sequentialNode)
+			log.Panicf("hashclustermanager: updateMembership: %v is not in the right format! Should be <node name>_<seq #>.\n", sequentialNode)
 		}
 
+		seqNum2Node.Insert(data[0], getClusterId(data[1]))
 		newNodeSet.Insert(data[0])
-		seqNum2Node.Insert(getClusterId(data[1]), data[0])
 	}
 
-	for server, _ := range hcm.gRpcConns {
+	go hcm.leaderElection(seqNum2Node)
+
+	hcm.mu.Lock()
+	for server := range hcm.curAssignments {
 		oldNodeSet.Insert(server)
 	}
 
@@ -309,51 +322,42 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 	// 2. we received a notification about an ephemeral znode getting deleted,
 	// which means the server / node died.
 	removedNodes.Do(func(node any) {
-		hcm.mu.Lock()
-		defer hcm.mu.Unlock()
 		clusters := hcm.curAssignments[node.(string)]
-		clusters.Do(func(cluster any) {
-			nodes := hcm.cluster2NodeMap[getClusterId(cluster.(string))]
-			hcm.cluster2NodeMap[getClusterId(cluster.(string))] = removeItem(nodes, node.(string))
+		clusters.Do(func(clusterId any) {
+			hcm.cluster2NodeMap[clusterId.(int)] = removeItem(hcm.cluster2NodeMap[clusterId.(int)], node.(string))
 		})
 		delete(hcm.curAssignments, node.(string))
 	})
+	hcm.mu.Unlock()
 
-	for i, node := range sequentialNodes {
+	for i, node := range seqNum2Node.Keys() {
 		if newNodes.Has(node) {
-			clusters, _ := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), false)
+			if node != hcm.self.Name {
+				// newNodes don't contain this node.
+				go hcm.monitorClusterAssignment(node.(string))
 
-			// This function holds a lock
+				// This function holds a lock
 
-			nodeAddr := nodeAddrs[i]
+				nodeAddr := nodeAddrs[i]
+				hcm.mu.Lock()
 
-			hcm.mu.Lock()
-			curAssignments, exists := hcm.curAssignments[node]
-			if !exists {
-				curAssignments = set.New()
-				hcm.curAssignments[node] = curAssignments
+				// Create a new gRpc connection to the new node.
+				hcm.gRpcConns[node.(string)] = getGrpcConn(nodeAddr)
+				hcm.mu.Unlock()
 			}
-
-			for _, cluster := range clusters {
-				clusterId := getClusterId(cluster)
-				hcm.cluster2NodeMap[clusterId] = append(hcm.cluster2NodeMap[clusterId], node)
-				curAssignments.Insert(clusterId)
-			}
-
-			// Create a new gRpc connection to the new node.
-			hcm.gRpcConns[node] = getGrpcConn(nodeAddr)
-			hcm.mu.Unlock()
 		}
 	}
 
-	go hcm.leaderElection(seqNum2Node)
+	if _, exists := hcm.gRpcConns[hcm.self.Name]; !exists {
+		hcm.gRpcConns[hcm.self.Name] = getGrpcConn(hcm.self.Addr)
+	}
 }
 
 func (hcm *HashClusterManager) monitorMembership() {
 	evt := zk.Event{Type: zk.EventNodeChildrenChanged}
 
 	for {
-		nodes, watch, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(NODE_MEMBERSHIP, true, false)
+		nodes, _, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(NODE_MEMBERSHIP, true, false)
 
 		_ = nodes
 		_ = nodeAddrs
@@ -364,7 +368,8 @@ func (hcm *HashClusterManager) monitorMembership() {
 			hcm.updateMembership(nodes, nodeAddrs)
 		}
 
-		evt = <-watch
+		time.Sleep(time.Millisecond * 500)
+		// evt = <-watch
 	}
 }
 
@@ -373,7 +378,6 @@ func (hcm *HashClusterManager) allocateClusters(clusterId int) {
 }
 
 func (hcm *HashClusterManager) joinCluster(clusterId int, cluster string) {
-	hcm.joinClusterCallback(clusterId)
 	if exists, _ := hcm.zkClient.Exists(CLUSTER2NODE_PATH, false); !exists {
 		log.Panicf("hashclustermanager: %v does not exist.", CLUSTER2NODE_PATH)
 	}
@@ -387,9 +391,10 @@ func (hcm *HashClusterManager) joinCluster(clusterId int, cluster string) {
 	if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, hcm.self.Name)), "", zk.FlagEphemeral); !ok {
 		log.Panicf("hashclustermanager: create ephemeral znode %v failed for cluster %v \n", hcm.self.Name, cluster)
 	}
+	hcm.joinClusterCallback(clusterId)
 }
 
 func (hcm *HashClusterManager) exitCluster(clusterId int, cluster string) {
-	hcm.exitClusterCallback(clusterId)
 	hcm.zkClient.Delete(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, hcm.self.Name)))
+	hcm.exitClusterCallback(clusterId)
 }
