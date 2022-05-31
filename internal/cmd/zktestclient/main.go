@@ -18,6 +18,7 @@ const (
 var zkServers = flag.String("zkservers", ZK_SERVER, "Comma-separated list of zookeeper server addresses.")
 
 func main() {
+	flag.Parse()
 	client := zkc.NewZookeeperClient(time.Second, strings.Split(*zkServers, ","))
 
 	if exists, _ := client.Exists(ZK_TEST_CLIENT_ROOT_DIR, false); !exists {

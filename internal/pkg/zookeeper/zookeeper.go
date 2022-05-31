@@ -91,7 +91,7 @@ func (z *ZookeeperClient) GetChildren(path string, watch bool) (children []strin
 	}
 
 	if err != nil {
-		panic(err)
+		log.Error(err)
 	}
 
 	return children, channel
@@ -107,9 +107,11 @@ func (z *ZookeeperClient) GetDataFromChildren(path string, children []string, wa
 	return childrenData, childrenWatch
 }
 
-func (z *ZookeeperClient) GetChildrenAndData(path string, watchDir bool, watchEachChild bool) ([]string, <-chan zk.Event, []string, []<-chan zk.Event) {
-	children, channel := z.GetChildren(path, watchDir)
-	childrenData, childrenWatch := z.GetDataFromChildren(path, children, watchEachChild)
+func (z *ZookeeperClient) GetChildrenAndData(path string, watchDir bool, watchEachChild bool) (children []string, channel <-chan zk.Event, childrenData []string, childrenWatch []<-chan zk.Event) {
+	children, channel = z.GetChildren(path, watchDir)
+	if len(children) != 0 {
+		childrenData, childrenWatch = z.GetDataFromChildren(path, children, watchEachChild)
+	}
 
 	return children, channel, childrenData, childrenWatch
 }

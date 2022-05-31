@@ -58,7 +58,7 @@ type HashClusterManager struct {
 	clusterSize map[int]int
 
 	// Set of clusters that are below the preferredClustrs parameter
-	notFilledClusters set.Set
+	notFilledClusters *set.Set
 }
 
 func NewHashClusterManager(
@@ -83,21 +83,31 @@ func NewHashClusterManager(
 		curAssignments:      map[string]*set.Set{},
 		isLeader:            false,
 		clusterSize:         map[int]int{},
-		notFilledClusters:   set.Set{},
+		notFilledClusters:   set.New(),
 	}
 
 	return hcm
 }
 
-func (hcm *HashClusterManager) Init() {
-	// Create membership directory if it doesn't exist
-	if exist, _ := hcm.zkClient.Exists(NODE_MEMBERSHIP, false); !exist {
-		log.Printf("hashclustermanager: %v does not exist yet. Creating...\n", NODE_MEMBERSHIP)
+func (hcm *HashClusterManager) createDirectoryIfNotExist(path string, description string) {
+	if exist, _ := hcm.zkClient.Exists(path, false); !exist {
+		log.Printf("hashclustermanager: %v does not exist yet. Creating...\n", path)
 
-		if _, ok := hcm.zkClient.Create(NODE_MEMBERSHIP, "", 0); !ok {
-			log.Panicf("hashclustermanager: unable to create membership directory %v.\n", NODE_MEMBERSHIP)
+		if _, ok := hcm.zkClient.Create(path, "", 0); !ok {
+			log.Panicf("hashclustermanager: unable to create %v directory %v.\n", path, description)
 		}
 	}
+}
+
+func (hcm *HashClusterManager) Init() {
+	// Create service directory if it doesn't exist
+	hcm.createDirectoryIfNotExist(SERVICE_PATH, "service")
+
+	// Create membership directory if it doesn't exist
+	hcm.createDirectoryIfNotExist(NODE_MEMBERSHIP, "membership")
+
+	// Create membership directory if it doesn't exist
+	hcm.createDirectoryIfNotExist(NODE2CLUSTER_PATH, "node2cluster")
 
 	// Register membership
 	if _, ok := hcm.zkClient.Create(
@@ -146,7 +156,7 @@ func removeItem(slice []string, item string) []string {
 }
 
 func getMembershipSequentialZnodePrefix(name string) string {
-	return name + "_"
+	return name + SEQUNTIAL_NODE_SEP
 }
 
 func getClusterId(cluster string) int {
@@ -159,41 +169,54 @@ func getClusterId(cluster string) int {
 
 // updateCurrentClusterAssignment updates curAssignments
 func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string, node string) {
-	var newAssignment set.Set
+	isUpdatingSelf := node == hcm.self.Name
+	latestAssgnment := set.New()
 	for _, cluster := range clusters {
-		newAssignment.Insert(cluster)
+		latestAssgnment.Insert(getClusterId(cluster))
 	}
 
 	// Update local assignments
 	hcm.mu.Lock()
 	defer hcm.mu.Unlock()
 
-	curAssignments := hcm.curAssignments[node]
+	curAssignments, exists := hcm.curAssignments[node]
+	if !exists {
+		curAssignments = set.New()
+		hcm.curAssignments[node] = curAssignments
+	}
 
 	// Find removed assignments and new assignments
-	intersection := curAssignments.Intersection(&newAssignment)
+	intersection := curAssignments.Intersection(latestAssgnment)
 	removedAssignments := curAssignments.Difference(intersection)
-	newAssignments := newAssignment.Difference(intersection)
+	newAssignments := latestAssgnment.Difference(intersection)
 
-	removedAssignments.Do(func(cluster any) {
-		clusterId := getClusterId(cluster.(string))
+	log.Printf("cur: %v, latest: %v", curAssignments, latestAssgnment)
+	log.Printf("inter: %v, removed: %v, new: %v", intersection, removedAssignments, newAssignments)
+
+	removedAssignments.Do(func(clusterId any) {
 		curAssignments.Remove(clusterId)
+		hcm.cluster2NodeMap[clusterId.(int)] = removeItem(hcm.cluster2NodeMap[clusterId.(int)], node)
 
 		// Exit Cluster Callback
-		go hcm.exitCluster(clusterId, cluster.(string))
+		if isUpdatingSelf {
+			go hcm.exitCluster(clusterId.(int), strconv.Itoa(clusterId.(int)))
+		}
 	})
 
-	newAssignments.Do(func(cluster any) {
-		clusterId := getClusterId(cluster.(string))
+	newAssignments.Do(func(clusterId any) {
 		curAssignments.Insert(clusterId)
+		hcm.cluster2NodeMap[clusterId.(int)] = append(hcm.cluster2NodeMap[clusterId.(int)], node)
 
 		// Join Cluster Callback
-		go hcm.joinCluster(clusterId, cluster.(string))
+		if isUpdatingSelf {
+			go hcm.joinCluster(clusterId.(int), strconv.Itoa(clusterId.(int)))
+		}
 	})
 }
 
 func (hcm *HashClusterManager) monitorClusterAssignment() {
 	evt := zk.Event{Type: zk.EventNodeChildrenChanged}
+	i := 1
 
 	for {
 		clusters, watch := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, hcm.self.Name), true)
@@ -201,6 +224,8 @@ func (hcm *HashClusterManager) monitorClusterAssignment() {
 		// We only care if the children are changed (assignment changed).
 		// We ignore other types of updates and do not expect them to happen.
 		if evt.Type == zk.EventNodeChildrenChanged {
+			log.Printf("Update assignments...%d, %v", i, clusters)
+			i += 1
 			hcm.updateCurrentClusterAssignment(clusters, hcm.self.Name)
 		}
 
@@ -251,10 +276,16 @@ func (hcm *HashClusterManager) leaderElection(seqNum2Node *sortedmap.SortedMap) 
 }
 
 func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAddrs []string) {
-	var newNodeSet, oldNodeSet set.Set
+	if len(sequentialNodes) == 0 {
+		return
+	}
+
+	newNodeSet := set.New()
+	oldNodeSet := set.New()
 
 	// seqNum int -> node string
 	seqNum2Node := sortedmap.New(len(sequentialNodes), func(i, j any) bool {
+		log.Printf("i=%v, j=%v", i, j)
 		return i.(int) < j.(int)
 	})
 
@@ -273,7 +304,7 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 	}
 
 	// Find removed nodes and new nodes
-	intersection := oldNodeSet.Intersection(&newNodeSet)
+	intersection := oldNodeSet.Intersection(newNodeSet)
 	removedNodes := oldNodeSet.Difference(intersection)
 	newNodes := newNodeSet.Difference(intersection)
 
@@ -304,12 +335,6 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 			nodeAddr := nodeAddrs[i]
 
 			hcm.mu.Lock()
-			curAssignments := hcm.curAssignments[node]
-			curAssignments.Do(func(cluster any) {
-				nodes := hcm.cluster2NodeMap[getClusterId(cluster.(string))]
-				hcm.cluster2NodeMap[getClusterId(cluster.(string))] = append(nodes, node)
-			})
-
 			// Create a new gRpc connection to the new node.
 			hcm.gRpcConns[node] = getGrpcConn(nodeAddr)
 			hcm.mu.Unlock()
@@ -323,8 +348,7 @@ func (hcm *HashClusterManager) monitorMembership() {
 	evt := zk.Event{Type: zk.EventNodeChildrenChanged}
 
 	for {
-		nodes, watch, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(
-			zkc.GetAbsolutePath(NODE2CLUSTER_PATH, hcm.self.Name), true, false)
+		nodes, watch, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(NODE_MEMBERSHIP, true, false)
 
 		_ = nodes
 		_ = nodeAddrs
@@ -345,8 +369,14 @@ func (hcm *HashClusterManager) allocateClusters(clusterId int) {
 
 func (hcm *HashClusterManager) joinCluster(clusterId int, cluster string) {
 	hcm.joinClusterCallback(clusterId)
-	if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster), "", 0); !ok {
-		log.Panicln("hashclustermanager: create znode failed for cluster", cluster)
+	if exists, _ := hcm.zkClient.Exists(CLUSTER2NODE_PATH, false); !exists {
+		log.Panicf("hashclustermanager: %v does not exist.", CLUSTER2NODE_PATH)
+	}
+
+	if exists, _ := hcm.zkClient.Exists(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster), false); !exists {
+		if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster), "", 0); !ok {
+			log.Panicf("hashclustermanager: create cluster directory %v \n", cluster)
+		}
 	}
 
 	if _, ok := hcm.zkClient.Create(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, hcm.self.Name)), "", zk.FlagEphemeral); !ok {
@@ -356,5 +386,5 @@ func (hcm *HashClusterManager) joinCluster(clusterId int, cluster string) {
 
 func (hcm *HashClusterManager) exitCluster(clusterId int, cluster string) {
 	hcm.exitClusterCallback(clusterId)
-	hcm.zkClient.Delete(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, cluster))
+	hcm.zkClient.Delete(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, zkc.GetAbsolutePath(cluster, hcm.self.Name)))
 }
