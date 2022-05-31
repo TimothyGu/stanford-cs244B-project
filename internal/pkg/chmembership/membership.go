@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	c "github.com/buraksezer/consistent"
+	"github.com/buraksezer/consistent"
 	"github.com/go-zookeeper/zk"
 	"github.com/golang-collections/collections/set"
 	log "github.com/sirupsen/logrus"
@@ -39,17 +39,17 @@ type Membership struct {
 	// mu protects aliveNodes and ch
 	mu         sync.RWMutex
 	aliveNodes map[string]*ServerNode
-	ch         *c.Consistent // *ServerNode
+	ch         *consistent.Consistent // *ServerNode
 }
 
-func NewMembership(consistent *c.Consistent, timeout time.Duration, self ServerNode, servers []string) *Membership {
+func NewMembership(timeout time.Duration, self ServerNode, servers []string) *Membership {
 	z := zkc.NewZookeeperClient(timeout, servers)
 
 	m := &Membership{
 		zkc:        z,
 		self:       self,
 		aliveNodes: map[string]*ServerNode{},
-		ch:         consistent,
+		ch:         NewConsistentHashing(),
 	}
 	return m
 }
