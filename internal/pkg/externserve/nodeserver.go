@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/buraksezer/consistent"
-	"github.com/dchest/siphash"
 	"github.com/miekg/dns"
 	log "github.com/sirupsen/logrus"
 
@@ -18,31 +16,6 @@ type LocalServerData struct {
 	membership *chmembership.Membership
 }
 
-// DNSRequestHash is the hash function used to distribute keys/members uniformly.
-type DNSRequestHash struct{}
-
-// Keys to SipHash, generated at random.
-// Ideally this should be decided at runtime and stored in Zookeeper.
-const (
-	siphash_k0 uint64 = 16038536194969526240
-	siphash_k1 uint64 = 11178038365157218530
-)
-
-func (h DNSRequestHash) Sum64(data []byte) uint64 {
-	return siphash.Hash(siphash_k0, siphash_k1, data)
-}
-
-// CreateConsistentHashing creates a new consistent instance.
-func CreateConsistentHashing() *consistent.Consistent {
-	cfg := consistent.Config{
-		PartitionCount:    3,
-		ReplicationFactor: 3,
-		Load:              1.50,
-		Hasher:            DNSRequestHash{},
-	}
-	return consistent.New(nil, cfg)
-}
-
 func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	s := &dns.Server{
 		Addr: addr,
@@ -50,7 +23,7 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	}
 
 	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
-		log.Infof("received request from %v", rw.RemoteAddr())
+		log.Infof("externserve: received request from %v", rw.RemoteAddr())
 		/**
 		 * lookup values
 		 */
@@ -71,7 +44,10 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 						lookup.ExternalProfile,
 					)
 					for _, rec := range recs {
-						output <- rec
+						output <- types.TypedResourceRecord{
+							Type:   rec.Type,
+							Record: rec.Record,
+						}
 					}
 				}()
 			}
@@ -115,14 +91,14 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 
 		err := rw.WriteMsg(response)
 		if err != nil {
-			log.Errorf("error writing response %v", err)
+			log.Errorf("externserve: error writing response %v", err)
 		}
 	})
 
 	log.Infof("externserve: starting at %s", s.Addr)
 	err := s.ListenAndServe()
 	if err != nil {
-		log.Fatalf("Error resolving UDP address: %v", err)
+		log.Fatalf("externserve: error resolving UDP address: %v", err)
 	}
 }
 
