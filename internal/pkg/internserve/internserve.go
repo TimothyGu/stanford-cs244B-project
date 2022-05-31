@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/cache"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/chmembership"
@@ -81,7 +82,7 @@ func (s *InternAPIServer) Query(ctx context.Context, req *pb.QueryRequest) (*pb.
 		}
 		res.Response = append(res.Response, &pb.DNSResponse{
 			Rr:     rrBuf,
-			Expiry: nil,
+			Expiry: timestamppb.New(out.Expiry),
 			Type:   pb.FromResourceRecordType(out.Type),
 		})
 	}

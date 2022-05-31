@@ -23,7 +23,7 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 	}
 
 	dns.HandleFunc(".", func(rw dns.ResponseWriter, queryMsg *dns.Msg) {
-		log.Infof("received request from %v", rw.RemoteAddr())
+		log.Infof("externserve: received request from %v", rw.RemoteAddr())
 		/**
 		 * lookup values
 		 */
@@ -44,7 +44,10 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 						lookup.ExternalProfile,
 					)
 					for _, rec := range recs {
-						output <- rec
+						output <- types.TypedResourceRecord{
+							Type:   rec.Type,
+							Record: rec.Record,
+						}
 					}
 				}()
 			}
@@ -88,14 +91,14 @@ func ListenAndServeUDP(addr string, localServerData *LocalServerData) {
 
 		err := rw.WriteMsg(response)
 		if err != nil {
-			log.Errorf("error writing response %v", err)
+			log.Errorf("externserve: error writing response %v", err)
 		}
 	})
 
 	log.Infof("externserve: starting at %s", s.Addr)
 	err := s.ListenAndServe()
 	if err != nil {
-		log.Fatalf("Error resolving UDP address: %v", err)
+		log.Fatalf("externserve: error resolving UDP address: %v", err)
 	}
 }
 

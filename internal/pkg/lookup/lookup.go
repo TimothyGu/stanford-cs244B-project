@@ -169,7 +169,7 @@ func l2Lookup(ctx context.Context, query dns.Question, addr string) []cache.Valu
 			Qtype: uint32(query.Qtype),
 		},
 	}
-	log.Infof("lookup: requesting %v from %v", query.Name, addr)
+	log.Infof("lookup: requesting %v from (L2) %v", query.Name, addr)
 	res, err := c.Query(ctx, req)
 	if err != nil {
 		log.Errorf("lookup: %v", err)
@@ -210,7 +210,7 @@ func (o LookupOption) Has(option LookupOption) bool {
 }
 
 // Lookup does whatever is necessary to lookup a query.
-func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question, options LookupOption) (output []types.TypedResourceRecord) {
+func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question, options LookupOption) (output []cache.Value) {
 	if !supportedQueries[query.Qtype] || query.Qclass != dns.ClassINET {
 		return nil
 	}
@@ -234,12 +234,16 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	var records []cache.Value
 	var ok bool
 	records, ok = L1Cache.Get(key)
-	if !ok && inSelfRange {
+	if ok {
+		log.Debugf("lookup: L1 cache hit for %s", query.Name)
+	}
+	if !ok {
 		records, ok = L2Cache.Get(key)
+		if ok {
+			log.Debugf("lookup: L2 cache hit for %s", query.Name)
+		}
 	}
 	if ok {
-		log.Infof("found local cache for %s", query.Name)
-
 		for _, rec := range records {
 			ttl := rec.Expiry.Sub(now).Seconds()
 			if ttl > 0 {
@@ -249,9 +253,10 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 				} else {
 					rr.Header().Ttl = uint32(ttl)
 				}
-				output = append(output, types.TypedResourceRecord{
+				output = append(output, cache.Value{
 					Type:   rec.Type,
 					Record: rr,
+					Expiry: rec.Expiry,
 				})
 			}
 		}
@@ -260,7 +265,7 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 		}
 		// Don't bother deleting the entry from cache: we'll be looking it up
 		// externally anyway, which should overwrite the L2 cache.
-		log.Infof("local cache for %s is stale", query.Name)
+		log.Debugf("lookup: local cache for %s is stale", query.Name)
 	}
 
 	var cacheValues []cache.Value
@@ -270,6 +275,7 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	if inSelfRange || len(l2Nodes) == 0 {
 		cacheValues = externalLookup(ctx, query)
 		if inSelfRange && options.Has(LookupSaveToL2) {
+			log.Debugf("lookup: adding %s to L2 cache", query.Name)
 			L2Cache.Add(key, cacheValues)
 		}
 	} else if options.Has(LookupRemoteL2) {
@@ -279,11 +285,13 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 
 	if !inSelfRange && options.Has(LookupSaveToL1) {
 		if len(cacheValues) > 0 {
+			log.Debugf("lookup: adding %s to L1 cache", query.Name)
 			L1Cache.Add(key, cacheValues)
 		}
 	}
 
 	if options.Has(LookupGossipToOtherL2) {
+		log.Infof("lookup: gossiping %s to other L2", query.Name)
 		go func() {
 			gossipCtx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 			defer cancel()
@@ -301,13 +309,7 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 		}()
 	}
 
-	for _, rec := range cacheValues {
-		output = append(output, types.TypedResourceRecord{
-			Type:   rec.Type,
-			Record: rec.Record,
-		})
-	}
-	return output
+	return cacheValues
 }
 
 func contains(servers []*chmembership.ServerNode, s chmembership.ServerNode) bool {

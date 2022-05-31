@@ -105,6 +105,9 @@ func (m *Membership) LocateServer(key []byte) *ServerNode {
 // []key -> []ServerNode
 func (m *Membership) GetClosestN(key []byte, count int) []*ServerNode {
 	m.mu.RLock()
+	if n := len(m.ch.GetMembers()); n < count {
+		count = n
+	}
 	members, err := m.ch.GetClosestN(key, count)
 	m.mu.RUnlock()
 	if err != nil {
