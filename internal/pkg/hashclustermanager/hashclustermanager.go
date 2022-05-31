@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-zookeeper/zk"
 	"github.com/golang-collections/collections/set"
@@ -223,7 +222,7 @@ func (hcm *HashClusterManager) monitorClusterAssignment(node string) {
 		// }
 		// hcm.mu.RUnlock()
 
-		clusters, _ := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), true)
+		clusters, watch := hcm.zkClient.GetChildren(zkc.GetAbsolutePath(NODE2CLUSTER_PATH, node), true)
 
 		// We only care if the children are changed (assignment changed).
 		// We ignore other types of updates and do not expect them to happen.
@@ -233,8 +232,8 @@ func (hcm *HashClusterManager) monitorClusterAssignment(node string) {
 
 		// Unfortunately, it seems the ZK library will deadlock or starve when using the watch.
 		// This renders our design impossible to implement.
-		time.Sleep(time.Millisecond * 500)
-		// evt = <-watch
+		// time.Sleep(time.Millisecond * 500)
+		evt = <-watch
 	}
 }
 
@@ -357,7 +356,7 @@ func (hcm *HashClusterManager) monitorMembership() {
 	evt := zk.Event{Type: zk.EventNodeChildrenChanged}
 
 	for {
-		nodes, _, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(NODE_MEMBERSHIP, true, false)
+		nodes, watch, nodeAddrs, _ := hcm.zkClient.GetChildrenAndData(NODE_MEMBERSHIP, true, false)
 
 		_ = nodes
 		_ = nodeAddrs
@@ -368,8 +367,8 @@ func (hcm *HashClusterManager) monitorMembership() {
 			hcm.updateMembership(nodes, nodeAddrs)
 		}
 
-		time.Sleep(time.Millisecond * 500)
-		// evt = <-watch
+		// time.Sleep(time.Millisecond * 500)
+		evt = <-watch
 	}
 }
 

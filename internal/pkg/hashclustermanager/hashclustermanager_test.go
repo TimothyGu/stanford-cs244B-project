@@ -131,10 +131,9 @@ func Test_hcm_assignment(t *testing.T) {
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath, i))
 		client.Delete(zkc.GetAbsolutePath(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, i), NODE_NAME_1))
 	}
-	client.Delete(node2ClusterPath)
 	preventFromBeingLeader(hcm)
 
-	go hcm.Init()
+	hcm.Init()
 
 	// Create hash cluster 0
 	// Register membership
@@ -188,7 +187,6 @@ func Test_hcm_assignment(t *testing.T) {
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath, i))
 		client.Delete(zkc.GetAbsolutePath(zkc.GetAbsolutePath(CLUSTER2NODE_PATH, i), NODE_NAME_1))
 	}
-	client.Delete(node2ClusterPath)
 }
 
 func Test_hcm_assignment_multinode(t *testing.T) {
@@ -219,12 +217,10 @@ func Test_hcm_assignment_multinode(t *testing.T) {
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath1, i))
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath2, i))
 	}
-	client.Delete(node2ClusterPath1)
-	client.Delete(node2ClusterPath2)
 	preventFromBeingLeader(hcm1)
 
-	go hcm1.Init()
-	go hcm2.Init()
+	hcm1.Init()
+	hcm2.Init()
 
 	// Create hash cluster 0
 	// Register membership
@@ -316,8 +312,6 @@ func Test_hcm_assignment_multinode(t *testing.T) {
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath1, i))
 		client.Delete(zkc.GetAbsolutePath(node2ClusterPath2, i))
 	}
-	client.Delete(node2ClusterPath1)
-	client.Delete(node2ClusterPath2)
 }
 
 func test_add_cluster(
