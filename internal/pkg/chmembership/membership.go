@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	c "github.com/buraksezer/consistent"
+	"github.com/buraksezer/consistent"
 	"github.com/go-zookeeper/zk"
 	"github.com/golang-collections/collections/set"
 	log "github.com/sirupsen/logrus"
@@ -25,21 +25,22 @@ func getAbsolutePath(relativePath string) string {
 type Membership struct {
 	zkc      *zkc.ZookeeperClient
 	dirWatch <-chan zk.Event
+	self     types.ServerNode
 
 	// mu protects aliveNodes and ch
 	mu         sync.RWMutex
-	aliveNodes sync.Map      // ServerName -> *ServerNode
-	ch         *c.Consistent // ServerNode
-	self       types.ServerNode
+	aliveNodes map[string]*types.ServerNode
+	ch         *consistent.Consistent // *ServerNode
 }
 
-func NewMembership(consistent *c.Consistent, timeout time.Duration, self types.ServerNode, servers []string) *Membership {
+func NewMembership(timeout time.Duration, self types.ServerNode, servers []string) *Membership {
 	z := zkc.NewZookeeperClient(timeout, servers)
 
 	m := &Membership{
-		ch:   consistent,
-		zkc:  z,
-		self: self,
+		zkc:        z,
+		self:       self,
+		aliveNodes: map[string]*types.ServerNode{},
+		ch:         NewConsistentHashing(),
 	}
 	return m
 }
@@ -64,19 +65,19 @@ func (m *Membership) Init() {
 	nodes, channel, nodesData, _ := m.zkc.GetChildrenAndData(CH_MEMBERSHIP_PATH, true, false)
 
 	m.mu.Lock()
-	m.dirWatch = channel
-
 	for i := range nodes {
 		// Add to consistent hash ring
 		serverName := nodes[i]
 		serverAddr := nodesData[i]
 		serverNode := &types.ServerNode{Name: serverName, Addr: serverAddr}
+		log.Infof("chmembership: adding server %v @ %v", serverNode.Name, serverNode.Addr)
 		m.ch.Add(serverNode)
-		m.aliveNodes.Store(serverName, serverNode)
+		m.aliveNodes[serverName] = serverNode
 	}
 	m.mu.Unlock()
 
 	// Monitor membership
+	m.dirWatch = channel
 	go m.MonitorMembershipDirectory()
 }
 
@@ -94,6 +95,9 @@ func (m *Membership) LocateServer(key []byte) *types.ServerNode {
 // []key -> []ServerNode
 func (m *Membership) GetClosestN(key []byte, count int) []*types.ServerNode {
 	m.mu.RLock()
+	if n := len(m.ch.GetMembers()); n < count {
+		count = n
+	}
 	members, err := m.ch.GetClosestN(key, count)
 	m.mu.RUnlock()
 	if err != nil {
@@ -108,15 +112,14 @@ func (m *Membership) GetClosestN(key []byte, count int) []*types.ServerNode {
 	return serverNodes
 }
 
-func (m *Membership) getOldServers() set.Set {
+func (m *Membership) getOldServers() *set.Set {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	var servers set.Set
-	m.aliveNodes.Range(func(k any, _ any) bool {
+	servers := set.New()
+	for k := range m.aliveNodes {
 		servers.Insert(k)
-		return true
-	})
+	}
 	return servers
 }
 
@@ -134,29 +137,32 @@ func (m *Membership) MonitorMembershipDirectory() {
 
 			oldServers := m.getOldServers()
 
-			var newServers set.Set
-			var newServerNodes map[string]*types.ServerNode
+			newServers := set.New()
+			newServerNodes := map[string]*types.ServerNode{}
 			for i, node := range nodes {
 				newServers.Insert(node)
 				newServerNodes[node] = &types.ServerNode{Name: node, Addr: nodesData[i]}
 			}
 
-			intersection := oldServers.Intersection(&newServers)
+			intersection := oldServers.Intersection(newServers)
 			removedServers := oldServers.Difference(intersection)
 			addedServers := newServers.Difference(intersection)
 
 			m.mu.Lock()
-			defer m.mu.Unlock()
 			removedServers.Do(func(server interface{}) {
-				m.aliveNodes.Delete(server)
+				serverNode, ok := m.aliveNodes[server.(string)]
+				if ok {
+					log.Infof("chmembership: removing server %v @ %v", serverNode.Name, serverNode.Addr)
+				}
 				m.ch.Remove(server.(string))
 			})
-
 			addedServers.Do(func(server interface{}) {
 				serverNode := newServerNodes[server.(string)]
-				m.aliveNodes.Store(server, serverNode)
+				log.Infof("chmembership: adding server %v @ %v", serverNode.Name, serverNode.Addr)
+				m.aliveNodes[server.(string)] = serverNode
 				m.ch.Add(serverNode)
 			})
+			m.mu.Unlock()
 		}
 	}
 }

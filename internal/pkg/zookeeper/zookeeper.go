@@ -16,7 +16,9 @@ type ZookeeperClient struct {
 }
 
 func NewZookeeperClient(timeout time.Duration, servers []string) *ZookeeperClient {
-	c, _, err := zk.Connect(servers, timeout)
+	logger := log.New()
+	logger.AddHook(prefixHook("zk: "))
+	c, _, err := zk.Connect(servers, timeout, zk.WithLogger(logger))
 	if err != nil {
 		panic(err)
 	}

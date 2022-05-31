@@ -35,9 +35,7 @@ func main() {
 		log.Fatalln("Error: server addr not provided.")
 	}
 
-	consistentHashing := externserve.CreateConsistentHashing()
 	membership := chmembership.NewMembership(
-		consistentHashing,
 		time.Second,
 		types.ServerNode{Name: *serverName, Addr: *serverAddr},
 		strings.Split(*zkServers, ","),
