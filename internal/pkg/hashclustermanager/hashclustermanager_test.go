@@ -97,29 +97,50 @@ func Test_hcm_assignment(t *testing.T) {
 	clusterId := 0
 	cluster := "0"
 	test_add_cluster(hcm, t, clusterId, cluster, &joinCounter, &exitCounter)
+	if joinClusterCalls != 1 {
+		t.Fatalf("joinClusterCalls should be 1 instead of %d", joinClusterCalls)
+	}
 
 	clusterId = 1
 	cluster = "1"
 	test_add_cluster(hcm, t, clusterId, cluster, &joinCounter, &exitCounter)
+	if joinClusterCalls != 2 {
+		t.Fatalf("joinClusterCalls should be 2 instead of %d", joinClusterCalls)
+	}
 
 	// Test remove assignment
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+	if exitClusterCalls != 1 {
+		t.Fatalf("exitClusterCalls should be 1 instead of %d", exitClusterCalls)
+	}
 
 	clusterId = 2
 	cluster = "2"
 	test_add_cluster(hcm, t, clusterId, cluster, &joinCounter, &exitCounter)
+	if joinClusterCalls != 3 {
+		t.Fatalf("joinClusterCalls should be 3 instead of %d", joinClusterCalls)
+	}
 
 	clusterId = 0
 	cluster = "0"
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+	if exitClusterCalls != 2 {
+		t.Fatalf("exitClusterCalls should be 2 instead of %d", exitClusterCalls)
+	}
 
 	// Should be no op
 	exitCounter.Store(clusterId, 1)
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+	if exitClusterCalls != 2 {
+		t.Fatalf("exitClusterCalls should be 2 instead of %d", exitClusterCalls)
+	}
 
 	clusterId = 2
 	cluster = "2"
 	test_remove_cluster(hcm, t, clusterId, cluster, &exitCounter)
+	if exitClusterCalls != 3 {
+		t.Fatalf("exitClusterCalls should be 3 instead of %d", exitClusterCalls)
+	}
 
 }
 
