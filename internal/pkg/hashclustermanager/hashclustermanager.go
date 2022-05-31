@@ -190,9 +190,6 @@ func (hcm *HashClusterManager) updateCurrentClusterAssignment(clusters []string,
 	removedAssignments := curAssignments.Difference(intersection)
 	newAssignments := latestAssgnment.Difference(intersection)
 
-	log.Printf("cur: %v, latest: %v", curAssignments, latestAssgnment)
-	log.Printf("inter: %v, removed: %v, new: %v", intersection, removedAssignments, newAssignments)
-
 	removedAssignments.Do(func(clusterId any) {
 		curAssignments.Remove(clusterId)
 		hcm.cluster2NodeMap[clusterId.(int)] = removeItem(hcm.cluster2NodeMap[clusterId.(int)], node)
@@ -224,8 +221,6 @@ func (hcm *HashClusterManager) monitorClusterAssignment() {
 		// We only care if the children are changed (assignment changed).
 		// We ignore other types of updates and do not expect them to happen.
 		if evt.Type == zk.EventNodeChildrenChanged {
-			log.Printf("Update assignments...%d, %v", i, clusters)
-			i += 1
 			hcm.updateCurrentClusterAssignment(clusters, hcm.self.Name)
 		}
 
@@ -285,7 +280,6 @@ func (hcm *HashClusterManager) updateMembership(sequentialNodes []string, nodeAd
 
 	// seqNum int -> node string
 	seqNum2Node := sortedmap.New(len(sequentialNodes), func(i, j any) bool {
-		log.Printf("i=%v, j=%v", i, j)
 		return i.(int) < j.(int)
 	})
 
