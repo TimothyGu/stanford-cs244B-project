@@ -312,7 +312,7 @@ func Lookup(ctx context.Context, m *chmembership.Membership, query dns.Question,
 	return cacheValues
 }
 
-func contains(servers []*chmembership.ServerNode, s chmembership.ServerNode) bool {
+func contains(servers []*types.ServerNode, s types.ServerNode) bool {
 	for _, os := range servers {
 		if os.Name == s.Name {
 			return true

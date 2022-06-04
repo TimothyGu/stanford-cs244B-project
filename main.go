@@ -11,6 +11,7 @@ import (
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/externserve"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/internserve"
 	"go.timothygu.me/stanford-cs244b-project/internal/pkg/lookup"
+	"go.timothygu.me/stanford-cs244b-project/internal/pkg/types"
 )
 
 const ZK_SERVER = "54.219.185.237:2181"
@@ -36,7 +37,7 @@ func main() {
 
 	membership := chmembership.NewMembership(
 		time.Second,
-		chmembership.ServerNode{Name: *serverName, Addr: *serverAddr},
+		types.ServerNode{Name: *serverName, Addr: *serverAddr},
 		strings.Split(*zkServers, ","),
 	)
 

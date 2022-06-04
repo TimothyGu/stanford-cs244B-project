@@ -11,6 +11,7 @@ require (
 	github.com/hashicorp/golang-lru v0.5.1
 	github.com/miekg/dns v1.1.49
 	github.com/sirupsen/logrus v1.8.1
+	github.com/umpc/go-sortedmap v0.0.0-20180422175548-64ab94c482f4
 	go.etcd.io/etcd/client/pkg/v3 v3.5.4
 	go.etcd.io/etcd/raft/v3 v3.5.4
 	go.etcd.io/etcd/server/v3 v3.5.4
